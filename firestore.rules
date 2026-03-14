@@ -1,0 +1,140 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================
+    // Public shared research reports
+    // =========================
+    match /sharedReports/{shareId} {
+      // Anyone can read *only* if it is explicitly public
+      allow read: if resource.data.isPublic == true;
+
+      // Only signed-in users can write; additionally require they are the ownerUid
+      allow create: if request.auth != null
+        && request.resource.data.ownerUid == request.auth.uid;
+
+      allow update, delete: if request.auth != null
+        && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // =========================
+    // Organizations
+    // =========================
+    match /organizations/{orgId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /users/{userId} {
+      // Profiles
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+
+      // Shared project references for this user (userId is the collaborator)
+      match /sharedProjects/{projectId} {
+        // Only the owner of the project can create/update sharedProject refs
+        function isProjectOwnerForWrite() {
+          return request.auth != null
+            && request.resource.data.ownerUid == request.auth.uid
+            && exists(
+              /databases/$(database)/documents/users/$(request.auth.uid)/projects/$(projectId)
+            )
+            && get(
+              /databases/$(database)/documents/users/$(request.auth.uid)/projects/$(projectId)
+            ).data.ownerUid == request.auth.uid;
+        }
+
+        // Owner writes the ref under the collaborator's user doc
+        allow write: if isProjectOwnerForWrite();
+        
+        // Allow the collaborator to leave the project (delete the reference)
+        allow delete: if request.auth != null && request.auth.uid == userId;
+
+        // The collaborator (userId) and the owner can read this ref
+        allow read: if request.auth != null
+          && (
+            request.auth.uid == userId ||
+            (
+              resource.data.ownerUid == request.auth.uid &&
+              exists(
+                /databases/$(database)/documents/users/$(request.auth.uid)/projects/$(projectId)
+              )
+            )
+          );
+      }
+
+      // Per-user research projects
+      match /projects/{projectId} {
+        function isOwner() {
+          return request.auth != null && request.auth.uid == userId;
+        }
+
+        // Shared access is gated by sharedProjects under the *collaborator's* user doc
+        function hasSharedRef() {
+          return request.auth != null &&
+            exists(
+              /databases/$(database)/documents/users/$(request.auth.uid)/sharedProjects/$(projectId)
+            );
+        }
+
+        function sharedRef() {
+          return get(
+            /databases/$(database)/documents/users/$(request.auth.uid)/sharedProjects/$(projectId)
+          );
+        }
+
+        function isCollaborator() {
+          return hasSharedRef();
+        }
+
+        function isEditor() {
+          return isCollaborator() && sharedRef().data.role == 'editor';
+        }
+
+        // Owner or any collaborator can read
+        allow read: if isOwner() || isCollaborator();
+
+        // Owner or editor-collaborator can update (tasks, notes, title, etc.)
+        allow update: if isOwner() || isEditor();
+        // Only owner can create or delete the project itself
+        allow create, delete: if isOwner();
+
+        // Sessions subcollection
+        match /sessions/{sessionId} {
+          allow read: if isOwner() || isCollaborator();
+          allow write: if isOwner() || isEditor();
+          
+          match /chunks/{chunkId} {
+             allow read: if isOwner() || isCollaborator();
+             allow write: if isOwner() || isEditor();
+          }
+        }
+
+        // Realtime Presence
+        match /presence/{presentUserId} {
+          allow read: if isOwner() || isCollaborator();
+          allow write: if (isOwner() || isCollaborator()) && request.auth.uid == presentUserId;
+        }
+        
+        // Comments
+        match /comments/{commentId} {
+          allow read, write: if isOwner() || isCollaborator();
+        }
+        
+        // Activity Log
+        match /activity/{activityId} {
+          allow read: if isOwner() || isCollaborator();
+          allow write: if isOwner() || isCollaborator();
+        }
+      }
+
+      // All other nested docs (reports, notes not covered above): only owner
+      // Explicitly exclude sharedProjects to prevent spoofing
+      match /{document=**} {
+        allow read, write: if request.auth != null 
+          && request.auth.uid == userId
+          && !(document[0] == 'sharedProjects');
+      }
+    }
+  }
+}

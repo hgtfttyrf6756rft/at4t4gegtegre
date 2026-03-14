@@ -1,0 +1,464 @@
+{
+  "buildCommand": "npm run build",
+  "devCommand": "vite",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "functions": {
+    "api/marketing.ts": {
+      "memory": 1024,
+      "maxDuration": 120
+    },
+    "api/media.ts": {
+
+      "memory": 1024,
+      "maxDuration": 300,
+      "includeFiles": "api-legacy/**"
+    },
+    "api/agent.ts": {
+      "memory": 1024,
+      "maxDuration": 300,
+      "includeFiles": "api-legacy/**,services/**"
+    },
+    "api/google.ts": {
+      "memory": 1024,
+      "maxDuration": 60,
+      "includeFiles": "api-legacy/**"
+    },
+    "api/**/*.ts": {
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/w/:slug",
+      "destination": "/api/websites?op=serve&slug=:slug"
+    },
+    {
+      "source": "/api/google-calendar-event-delete",
+      "destination": "/api/google?op=google-calendar-event-delete"
+    },
+    {
+      "source": "/api/google-calendar-event-upsert",
+      "destination": "/api/google?op=google-calendar-event-upsert"
+    },
+    {
+      "source": "/api/google-calendar-events",
+      "destination": "/api/google?op=google-calendar-events"
+    },
+    {
+      "source": "/api/google-calendar-status",
+      "destination": "/api/google?op=google-calendar-status"
+    },
+    {
+      "source": "/api/youtube-search",
+      "destination": "/api/google?op=youtube-search"
+    },
+    {
+      "source": "/api/autocomplete",
+      "destination": "/api/google?op=autocomplete"
+    },
+    {
+      "source": "/api/google-disconnect",
+      "destination": "/api/google?op=google-disconnect"
+    },
+    {
+      "source": "/api/google-docs-get",
+      "destination": "/api/google?op=google-docs-get"
+    },
+    {
+      "source": "/api/google-docs-update",
+      "destination": "/api/google?op=google-docs-update"
+    },
+    {
+      "source": "/api/google-drive-auth-url",
+      "destination": "/api/google?op=google-drive-auth-url"
+    },
+    {
+      "source": "/api/google-drive-exchange",
+      "destination": "/api/google?op=google-drive-exchange"
+    },
+    {
+      "source": "/api/google-drive-files",
+      "destination": "/api/google?op=google-drive-files"
+    },
+    {
+      "source": "/api/google-drive-import",
+      "destination": "/api/google?op=google-drive-import"
+    },
+    {
+      "source": "/api/google-drive-status",
+      "destination": "/api/google?op=google-drive-status"
+    },
+    {
+      "source": "/api/google-sheets-create",
+      "destination": "/api/google?op=google-sheets-create"
+    },
+    {
+      "source": "/api/google-sheets-metadata",
+      "destination": "/api/google?op=google-sheets-metadata"
+    },
+    {
+      "source": "/api/google-sheets-values-clear",
+      "destination": "/api/google?op=google-sheets-values-clear"
+    },
+    {
+      "source": "/api/google-sheets-values-get",
+      "destination": "/api/google?op=google-sheets-values-get"
+    },
+    {
+      "source": "/api/google-sheets-values-update",
+      "destination": "/api/google?op=google-sheets-values-update"
+    },
+    {
+      "source": "/api/pexels-image",
+      "destination": "/api/media?op=pexels-image"
+    },
+    {
+      "source": "/api/gemini-image",
+      "destination": "/api/media?op=gemini-image"
+    },
+    {
+      "source": "/api/sora-video",
+      "destination": "/api/media?op=sora-video"
+    },
+    {
+      "source": "/api/creatomate-video",
+      "destination": "/api/media?op=creatomate-video"
+    },
+    {
+      "source": "/api/creatomate-overview-video",
+      "destination": "/api/media?op=creatomate-overview-video"
+    },
+    {
+      "source": "/api/creatomate-slideshow",
+      "destination": "/api/media?op=creatomate-slideshow"
+    },
+    {
+      "source": "/api/video-overview",
+      "destination": "/api/media?op=video-overview"
+    },
+    {
+      "source": "/api/social-reel",
+      "destination": "/api/media?op=social-reel"
+    },
+    {
+      "source": "/api/youtube-video-analysis",
+      "destination": "/api/media?op=youtube-video-analysis"
+    },
+    {
+      "source": "/api/check-subscription",
+      "destination": "/api/billing?op=check-subscription"
+    },
+    {
+      "source": "/api/create-checkout-session",
+      "destination": "/api/billing?op=create-checkout-session"
+    },
+    {
+      "source": "/api/webhook",
+      "destination": "/api/billing?op=webhook"
+    },
+    {
+      "source": "/api/deep-research",
+      "destination": "/api/research?op=deep-research"
+    },
+    {
+      "source": "/api/computer-use",
+      "destination": "/api/research?op=computer-use"
+    },
+    {
+      "source": "/api/computer-use-v2",
+      "destination": "/api/research?op=computer-use-v2"
+    },
+    {
+      "source": "/api/news-search",
+      "destination": "/api/research?op=news-search"
+    },
+    {
+      "source": "/api/news",
+      "destination": "/api/research?op=news-search"
+    },
+    {
+      "source": "/api/news-search",
+      "destination": "/api/research?op=news-search"
+    },
+    {
+      "source": "/api/brave-search",
+      "destination": "/api/research?op=brave-search"
+    },
+    {
+      "source": "/api/wiza-company-enrich-table",
+      "destination": "/api/research?op=wiza-company-enrich-table"
+    },
+    {
+      "source": "/api/wiza-generate-table",
+      "destination": "/api/research?op=wiza-generate-table"
+    },
+    {
+      "source": "/api/wiza-prospect-search",
+      "destination": "/api/research?op=wiza-prospect-search"
+    },
+    {
+      "source": "/api/account-delete",
+      "destination": "/api/media?op=account-delete"
+    },
+    {
+      "source": "/api/data-deletion-callback",
+      "destination": "/api/media?op=data-deletion-callback"
+    },
+    {
+      "source": "/api/data-deletion-status",
+      "destination": "/api/media?op=data-deletion-status"
+    },
+    {
+      "source": "/api/blob/upload",
+      "destination": "/api/media?op=upload-token"
+    },
+    {
+      "source": "/api/upload-blob",
+      "destination": "/api/media?op=upload-blob"
+    },
+    {
+      "source": "/api/delete-blob",
+      "destination": "/api/media?op=delete-blob"
+    },
+    {
+      "source": "/api/social",
+      "destination": "/api/social"
+    },
+    {
+      "source": "/api/tiktok-auth-url",
+      "destination": "/api/social?op=tiktok-auth-url"
+    },
+    {
+      "source": "/api/tiktok-exchange",
+      "destination": "/api/social?op=tiktok-exchange"
+    },
+    {
+      "source": "/api/tiktok-refresh",
+      "destination": "/api/social?op=tiktok-refresh"
+    },
+    {
+      "source": "/api/tiktok-revoke",
+      "destination": "/api/social?op=tiktok-revoke"
+    },
+    {
+      "source": "/api/tiktok-creator-info",
+      "destination": "/api/social?op=tiktok-creator-info"
+    },
+    {
+      "source": "/api/tiktok-post-video",
+      "destination": "/api/social?op=tiktok-post-video"
+    },
+    {
+      "source": "/api/tiktok-post-photo",
+      "destination": "/api/social?op=tiktok-post-photo"
+    },
+    {
+      "source": "/api/tiktok-post-status",
+      "destination": "/api/social?op=tiktok-post-status"
+    },
+    {
+      "source": "/api/linkedin-auth-url",
+      "destination": "/api/social?op=linkedin-auth-url"
+    },
+    {
+      "source": "/api/linkedin-exchange",
+      "destination": "/api/social?op=linkedin-exchange"
+    },
+    {
+      "source": "/api/linkedin-status",
+      "destination": "/api/social?op=linkedin-status"
+    },
+    {
+      "source": "/api/linkedin-post-text",
+      "destination": "/api/social?op=linkedin-post-text"
+    },
+    {
+      "source": "/api/linkedin-post-article",
+      "destination": "/api/social?op=linkedin-post-article"
+    },
+    {
+      "source": "/api/linkedin-register-upload",
+      "destination": "/api/social?op=linkedin-register-upload"
+    },
+    {
+      "source": "/api/linkedin-upload-media",
+      "destination": "/api/social?op=linkedin-upload-media"
+    },
+    {
+      "source": "/api/linkedin-post-media",
+      "destination": "/api/social?op=linkedin-post-media"
+    },
+    {
+      "source": "/api/linkedin-disconnect",
+      "destination": "/api/social?op=linkedin-disconnect"
+    },
+    {
+      "source": "/api/uploadpost-create-user",
+      "destination": "/api/social?op=uploadpost-create-user"
+    },
+    {
+      "source": "/api/uploadpost-get-users",
+      "destination": "/api/social?op=uploadpost-get-users"
+    },
+    {
+      "source": "/api/uploadpost-get-user",
+      "destination": "/api/social?op=uploadpost-get-user"
+    },
+    {
+      "source": "/api/uploadpost-generate-jwt",
+      "destination": "/api/social?op=uploadpost-generate-jwt"
+    },
+    {
+      "source": "/api/uploadpost-upload-video",
+      "destination": "/api/social?op=uploadpost-upload-video"
+    },
+    {
+      "source": "/api/uploadpost-upload-photos",
+      "destination": "/api/social?op=uploadpost-upload-photos"
+    },
+    {
+      "source": "/api/uploadpost-upload-text",
+      "destination": "/api/social?op=uploadpost-upload-text"
+    },
+    {
+      "source": "/api/uploadpost-status",
+      "destination": "/api/social?op=uploadpost-status"
+    },
+    {
+      "source": "/api/uploadpost-history",
+      "destination": "/api/social?op=uploadpost-history"
+    },
+    {
+      "source": "/api/uploadpost-facebook-pages",
+      "destination": "/api/social?op=uploadpost-facebook-pages"
+    },
+    {
+      "source": "/api/uploadpost-delete-user",
+      "destination": "/api/social?op=uploadpost-delete-user"
+    },
+    {
+      "source": "/api/linkedin",
+      "destination": "/api/social"
+    },
+    {
+      "source": "/api/tiktok",
+      "destination": "/api/social"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "auth-url"
+        }
+      ],
+      "destination": "/api/social?op=x-auth-url"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "exchange"
+        }
+      ],
+      "destination": "/api/social?op=x-exchange"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "status"
+        }
+      ],
+      "destination": "/api/social?op=x-status"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "disconnect"
+        }
+      ],
+      "destination": "/api/social?op=x-disconnect"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "upload-init"
+        }
+      ],
+      "destination": "/api/social?op=x-upload-init"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "upload-append"
+        }
+      ],
+      "destination": "/api/social?op=x-upload-append"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "upload-finalize"
+        }
+      ],
+      "destination": "/api/social?op=x-upload-finalize"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "upload-status"
+        }
+      ],
+      "destination": "/api/social?op=x-upload-status"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "post-tweet"
+        }
+      ],
+      "destination": "/api/social?op=x-post-tweet"
+    },
+    {
+      "source": "/api/x",
+      "has": [
+        {
+          "type": "query",
+          "key": "op",
+          "value": "post-scheduled"
+        }
+      ],
+      "destination": "/api/social?op=x-post-scheduled"
+    },
+    {
+      "source": "/((?!api/|@|.*\\.).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

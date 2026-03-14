@@ -1,0 +1,8 @@
+{
+  "name": "Copy of Copy of Copy of FreshFront R&DBlue",
+  "description": "Realtime Research with Reasoning. ",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
+}
