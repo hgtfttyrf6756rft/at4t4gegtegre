@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FreshFront — AI Data, Research and Content Creation Platform</title>
+  <meta name="description"
+    content="Turn deep research into interactive reports with sources, organize everything in projects, and generate shareable assets like blogs, videos, podcasts, and public report links." />
+  <meta name="theme-color" content="#000000" />
+
+  <link rel="icon" type="image/svg+xml"
+    href="https://inrveiaulksfmzsbyzqj.supabase.co/storage/v1/object/public/images/Untitled%20design.svg" />
+  <link rel="alternate icon"
+    href="https://inrveiaulksfmzsbyzqj.supabase.co/storage/v1/object/public/images/Untitled%20design.svg" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Researchr — Interactive Research, Projects & Content" />
+  <meta property="og:description"
+    content="Turn deep research into interactive reports with sources, organize everything in projects, and generate shareable assets like blogs, videos, podcasts, and public report links." />
+  <meta property="og:image"
+    content="https://so7ow2fypz0vpnxi.public.blob.vercel-storage.com/projects/Unified%20Dashboard%20for%20Building%20%26%20Managing%20Your%20Projects.PNG" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Researchr — Interactive Research, Projects & Content" />
+  <meta name="twitter:description"
+    content="Turn deep research into interactive reports with sources, organize everything in projects, and generate shareable assets like blogs, videos, podcasts, and public report links." />
+  <meta name="twitter:image"
+    content="https://so7ow2fypz0vpnxi.public.blob.vercel-storage.com/projects/Unified%20Dashboard%20for%20Building%20%26%20Managing%20Your%20Projects.PNG" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600&display=swap"
+    rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            gray: {
+              750: '#2d3748',
+              850: '#1a202c',
+              950: '#171923',
+            },
+            primary: {
+              400: '#818cf8',
+              500: '#6366f1',
+              600: '#4f46e5',
+            },
+            iris: {
+              50: '#f5f5ff',
+              100: '#ebedff',
+              200: '#d6daff',
+              300: '#b3b8ff',
+              400: '#858cff',
+              500: '#5d5fe6',
+              600: '#4b4dbd',
+              700: '#3e3f9c',
+              800: '#333480',
+              900: '#2b2b6b',
+            },
+            honey: {
+              50: '#fff9eb',
+              100: '#ffefc7',
+              200: '#ffdf8a',
+              300: '#ffc942',
+              400: '#ffb800',
+              500: '#e6a600',
+              600: '#b88500',
+              700: '#946b00',
+              800: '#7d5a00',
+              900: '#664a00',
+            },
+            coral: {
+              500: '#ff5c5c',
+              600: '#e65252',
+            },
+            ocean: {
+              500: '#0071e3',
+              600: '#005bb5',
+            },
+            deepsea: {
+              500: '#003366',
+              600: '#002244',
+            }
+          },
+          animation: {
+            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'fade-in': 'fadeIn 0.5s ease-out',
+            'marquee': 'marquee 240s linear infinite',
+          },
+          keyframes: {
+            fadeIn: {
+              '0%': { opacity: '0', transform: 'translateY(10px)' },
+              '100%': { opacity: '1', transform: 'translateY(0)' },
+            },
+            marquee: {
+              '0%': { transform: 'translateX(100%)' },
+              '100%': { transform: 'translateX(-100%)' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    /* Custom scrollbar for webkit */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #1f2937;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #4b5563;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #6b7280;
+    }
+
+    /* Mobile typography boost */
+    @media (max-width: 640px) {
+      body {
+        font-size: 17px;
+      }
+
+      .text-xs {
+        font-size: 0.9rem !important;
+      }
+
+      .text-sm {
+        font-size: 1rem !important;
+      }
+
+      [class*="text-[10px]"] {
+        font-size: 0.75rem !important;
+      }
+
+      [class*="text-[11px]"] {
+        font-size: 0.8rem !important;
+      }
+    }
+  </style>
+
+  <!-- deck.gl for 3D Maps -->
+  <script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
+    "react-markdown": "https://esm.sh/react-markdown@9?bundle",
+    "firebase/app": "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js",
+    "firebase/auth": "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js",
+    "firebase/analytics": "https://www.gstatic.com/firebasejs/10.12.0/firebase-analytics.js",
+    "firebase/firestore": "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js",
+    "firebase/storage": "https://www.gstatic.com/firebasejs/10.12.0/firebase-storage.js",
+    "firebase/": "https://aistudiocdn.com/firebase@^12.6.0/"
+  }
+}
+</script>
+  <script type="module" crossorigin src="/assets/index-DdTMf38Y.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-C5K6IGEb.css">
+<link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script></head>
+
+<body
+  class="bg-gray-950 text-white font-sans antialiased h-screen overflow-hidden selection:bg-primary-500 selection:text-white">
+  <div id="root"></div>
+</body>
+
+</html>
