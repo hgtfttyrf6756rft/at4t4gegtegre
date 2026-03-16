@@ -15761,12 +15761,12 @@ You can manage this product in **Assets → Products**.`;
                           <div className="flex flex-wrap gap-2">
                             {detectedPlatforms.map((platform) => {
                               const platformInfo: Record<SocialPlatform, { name: string; logo: string }> = {
-                                facebook: { name: 'Facebook', logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp' },
-                                instagram: { name: 'Instagram', logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp' },
-                                x: { name: 'X', logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/X-Logo-Round-Color.png' },
-                                tiktok: { name: 'TikTok', logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/tiktok-6338432_1280.webp' },
-                                youtube: { name: 'YouTube', logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png' },
-                                linkedin: { name: 'LinkedIn', logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/LinkedIn_logo_initials.png' },
+                                facebook: { name: 'Facebook', logo: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp' },
+                                instagram: { name: 'Instagram', logo: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp' },
+                                x: { name: 'X', logo: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/X-Logo-Round-Color.png' },
+                                tiktok: { name: 'TikTok', logo: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/tiktok-6338432_1280.webp' },
+                                youtube: { name: 'YouTube', logo: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png' },
+                                linkedin: { name: 'LinkedIn', logo: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/LinkedIn_logo_initials.png' },
                               };
                               const info = platformInfo[platform];
                               const isConnected = isPlatformConnected(platform);
