@@ -31,12 +31,12 @@ const PRIORITY_COLORS: Record<TaskPriority, { dot: string; light: string; dark: 
 };
 
 const PLATFORM_LOGOS: Record<string, string> = {
-  facebook: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp',
-  instagram: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp',
-  tiktok: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/tiktok-6338432_1280.webp',
-  youtube: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png',
-  linkedin: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/LinkedIn_logo_initials.png',
-  x: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/X-Logo-Round-Color.png',
+  facebook: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp',
+  instagram: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp',
+  tiktok: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/tiktok-6338432_1280.webp',
+  youtube: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png',
+  linkedin: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/LinkedIn_logo_initials.png',
+  x: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/X-Logo-Round-Color.png',
 };
 
 export const KanbanBoard: React.FC<KanbanBoardProps> = ({
