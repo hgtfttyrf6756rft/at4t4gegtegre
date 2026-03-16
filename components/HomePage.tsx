@@ -15,14 +15,14 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
   const logoUrl = 'https://inrveiaulksfmzsbyzqj.supabase.co/storage/v1/object/public/images/Untitled%20design.svg';
 
   const PLATFORM_LOGOS: Record<string, string> = {
-    facebook: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp',
-    instagram: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp',
-    tiktok: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/tiktok-6338432_1280.webp',
-    youtube: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png',
-    linkedin: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/LinkedIn_logo_initials.png',
-    x: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/X-Logo-Round-Color.png',
-    gmail: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Google_Gmail_Logo_512px.png',
-    outlook: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Microsoft_Outlook_Icon_%282025%E2%80%93present%29.svg.png',
+    facebook: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp',
+    instagram: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp',
+    tiktok: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/tiktok-6338432_1280.webp',
+    youtube: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png',
+    linkedin: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/LinkedIn_logo_initials.png',
+    x: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/X-Logo-Round-Color.png',
+    gmail: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Google_Gmail_Logo_512px.png',
+    outlook: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Microsoft_Outlook_Icon_%282025%E2%80%93present%29.svg.png',
   };
 
   const [openFaqId, setOpenFaqId] = useState<string | null>(null);
@@ -630,45 +630,45 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
       description:
         'Kick off an entire project instantly — the app generates a structured plan, draft topics, notes, tasks, and an initial research session with backlog so you never start from a blank page.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Start%20a%20Research%20Project%20with%20One%20Prompt.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Start%20a%20Research%20Project%20with%20One%20Prompt.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Start%20a%20Research%20Project%20with%20One%20Prompt%20dark.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Start%20a%20Research%20Project%20with%20One%20Prompt%20dark.PNG',
     },
     {
       title: 'Unified dashboard for building & managing projects',
       description:
         'All your sessions, sources, assets, tasks, notes, SEO insights, and knowledge base files live in one place — organized by project.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Unified%20Dashboard%20for%20Building%20%26%20Managing%20Your%20Projects.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Unified%20Dashboard%20for%20Building%20%26%20Managing%20Your%20Projects.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Unified%20Dashboard%20for%20Building%20%26%20Managing%20Your%20Projects%20dark.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Unified%20Dashboard%20for%20Building%20%26%20Managing%20Your%20Projects%20dark.PNG',
     },
     {
       title: 'Upload your files and chat with your knowledge base',
       description:
         'Drop in project material such as tables, docs, PDFs, images, video, or audio. The assistant can use your knowledge base as context while researching, asking questions, and generating content.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Upload%20Your%20Files%20and%20Chat%20with%20your%20Knowledge%20Base%202.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Upload%20Your%20Files%20and%20Chat%20with%20your%20Knowledge%20Base%202.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Upload%20Your%20Files%20and%20Chat%20with%20your%20Knowledge%20Base%20dark.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Upload%20Your%20Files%20and%20Chat%20with%20your%20Knowledge%20Base%20dark.PNG',
     },
     {
       title: 'Create blogs, videos, infographics, products, websites & more',
       description:
         'Turn your research into quality shareable output. Generate campaign assets directly from your project data and iterate in the same workspace.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/iconsa.png',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/iconsa.png',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/iconsa.png',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/iconsa.png',
     },
     {
       title: 'Unified Social Media Publishing & Scheduling',
       description:
         'Schedule and publish posts to X, LinkedIn, Facebook, Instagram, TikTok, and YouTube directly from your dashboard (3 posts/day on free plan). Use AI to generate captions and hashtags based on your research, and track performance with integrated insights.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/socialmedia.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/socialmedia.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/socialmediadark.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/socialmediadark.PNG',
       logos: ['x', 'linkedin', 'facebook', 'instagram', 'tiktok', 'youtube'],
     },
     {
@@ -676,9 +676,9 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
       description:
         'Create professional email templates with a visual builder, connect your Gmail or Outlook account, and send personalized bulk campaigns to leads. Track opens and responses directly in your dashboard.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/emails.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/emails.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/emailsblack.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/emailsblack.PNG',
       logos: ['gmail', 'outlook'],
     },
     {
@@ -686,18 +686,18 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
       description:
         'Create products, generate secure payment links with Stripe, and build full e-commerce storefronts with AI-designed checkout pages. Start selling in minutes.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/stripelightmode.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/stripelightmode.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/stripedarkmode.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/stripedarkmode.PNG',
     },
     {
       title: 'Browser Automation — Let AI Browse for You',
       description:
         'Hand off web tasks to AI agents that can navigate sites, fill forms, extract data, and complete research on your behalf. Watch in real-time as the AI browses the web like a human assistant.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/browserautolight.png',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/browserautolight.png',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/browserautodark.png',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/browserautodark.png',
     },
     {
       title: 'Interactive 3D World Generation',
@@ -713,52 +713,52 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
       description:
         'Generate data tables from research queries, search for leads and prospects, sync with Google Sheets, and export spreadsheets for outreach campaigns and CRM imports.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/tableslight.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/tableslight.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/tablesdark.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/tablesdark.PNG',
     },
     {
       title: 'AI-Powered Lead Capture Forms',
       description:
         'Design beautiful, conversion-optimized lead forms with AI. Collect submissions, manage leads, and export to your email campaigns — all without writing code.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/leadformlightmode.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/leadformlightmode.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/leadformdarkmode.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/leadformdarkmode.PNG',
     },
     {
       title: 'Interactive reports that help you explore your research',
       description:
         'Reports are built to be used — not just read. Explore with dynamic widgets, exercises, games and rich sections that turn findings into activities.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Interactive%20Reports%20Allow%20you%20to%20Explore%20Your%20Research.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Interactive%20Reports%20Allow%20you%20to%20Explore%20Your%20Research.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Interactive%20Reports%20Allow%20you%20to%20Explore%20Your%20Research%20dark.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Interactive%20Reports%20Allow%20you%20to%20Explore%20Your%20Research%20dark.PNG',
     },
     {
       title: 'Ready to take action',
       description:
         'There is a widget for every need, tailored to your session.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Discover%20Prospects%20%26%20Access%20Realtime%20Opportunities.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Discover%20Prospects%20%26%20Access%20Realtime%20Opportunities.PNG',
       subFeatures: [
         {
           title: 'Discover Active Opportunities',
           description:
             'Our agents seek active listings in your area that are relevant to your search and list them neatly in the report.',
           imageUrl:
-            'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Discover%20Prospects%20%26%20Access%20Realtime%20Opportunities.PNG',
+            'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Discover%20Prospects%20%26%20Access%20Realtime%20Opportunities.PNG',
           darkImageUrl:
-            'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/opportunities%20dark%20mode.png',
+            'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/opportunities%20dark%20mode.png',
         },
         {
           title: 'Simulate the Experience with Games',
           description:
             'Learn faster by stepping into the shoes of a decision maker that needs to consider key factors of the research to stay in business.',
           imageUrl:
-            'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Interactive%20Reports%20Allow%20you%20to%20Explore%20Your%20Research%202.PNG',
+            'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Interactive%20Reports%20Allow%20you%20to%20Explore%20Your%20Research%202.PNG',
           darkImageUrl:
-            'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/simulate%20dark%20mdoe.png',
+            'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/simulate%20dark%20mdoe.png',
         },
       ],
     },
@@ -767,72 +767,72 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
       description:
         'Branch ideas, combine concepts, draw diagrams and explore follow-ups in a visual map that stays linked to your project context.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Expand%20Research%20Visually%20with%20AI%20Mind%20Map.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Expand%20Research%20Visually%20with%20AI%20Mind%20Map.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Expand%20Research%20Visually%20with%20AI%20Mind%20Map%20dark.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Expand%20Research%20Visually%20with%20AI%20Mind%20Map%20dark.PNG',
     },
     {
       title: 'Listen on the go with podcasts',
       description:
         'Convert research into a conversation you can listen to — the best way to learn passively and perfect for commuting, workouts, or fast review before a meeting.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Create%20Multi-speaker%20Podcasts%20Summarizing%20Your%20Research%20Data%202.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Create%20Multi-speaker%20Podcasts%20Summarizing%20Your%20Research%20Data%202.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Create%20Multi-speaker%20Podcasts%20Summarizing%20Your%20Research%20Data%20dark.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Create%20Multi-speaker%20Podcasts%20Summarizing%20Your%20Research%20Data%20dark.PNG',
     },
     {
       title: 'Share interactive research reports with one click',
       description:
         'Publish a private report as a public link to share with teammates or clients in seconds. Each public report has its own chatbot that visitors can message regarding the research.',
       imageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Share%20Your%20Interactive%20Research%20Reports%20with%20One%20Click.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Share%20Your%20Interactive%20Research%20Reports%20with%20One%20Click.PNG',
       darkImageUrl:
-        'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Share%20Your%20Interactive%20Research%20Reports%20with%20One%20Click%20dark.PNG',
+        'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Share%20Your%20Interactive%20Research%20Reports%20with%20One%20Click%20dark.PNG',
     },
   ];
 
   const infographicImages = useMemo(() => {
     const urls = [
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic0.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic1.jpg',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic10.jfif',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic11.jfif',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic12.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic13.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic14.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic15.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic16.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic17.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic18.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic19.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic2.jpg',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic20.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic200.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic21.jfif',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic22.jfif',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic23.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic24.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic25.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic26.jpg',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic27.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic28.jpeg',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic29.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic3.jpg',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic30.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic31.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic32.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic33.jfif',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic34.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic35.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic36.png',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic37.jpg',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic39.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic4.jpg',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic40.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic5.jpg',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic6.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infographic7.webp',
-      'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/infogrpahic38.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic0.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic1.jpg',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic10.jfif',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic11.jfif',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic12.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic13.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic14.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic15.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic16.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic17.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic18.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic19.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic2.jpg',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic20.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic200.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic21.jfif',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic22.jfif',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic23.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic24.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic25.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic26.jpg',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic27.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic28.jpeg',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic29.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic3.jpg',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic30.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic31.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic32.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic33.jfif',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic34.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic35.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic36.png',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic37.jpg',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic39.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic4.jpg',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic40.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic5.jpg',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic6.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infographic7.webp',
+      'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/infogrpahic38.png',
     ];
 
     const num = (url: string) => {
@@ -979,7 +979,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
                   }
                 >
                   <span className="w-2 h-2 rounded-full bg-[#22c55e]"></span>
-                  Where information lives <span className="relative inline-block w-4 h-4 ml-1.5"><img src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/zombie.png" alt="zombie" className="absolute -top-4 -left-2 w-8 h-8 max-w-none object-contain" /></span>
+                  Where information lives <span className="relative inline-block w-4 h-4 ml-1.5"><img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/zombie.png" alt="zombie" className="absolute -top-4 -left-2 w-8 h-8 max-w-none object-contain" /></span>
                 </div>
                 <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight leading-[1.05]">
                   Data transformation <br />& business automation
@@ -1009,7 +1009,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
 
                 <div className="mt-4 flex items-center gap-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/stripe-new-logo-01-1536x1152.avif"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/stripe-new-logo-01-1536x1152.avif"
                     alt="Stripe"
                     className="h-9 w-auto object-contain flex-shrink-0"
                   />
@@ -1031,12 +1031,12 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
                   <div className={"hidden sm:block w-px h-4 mx-1 " + (isDarkMode ? 'bg-white/10' : 'bg-gray-200')} />
 
                   {[
-                    { name: 'Drive', url: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Google_Drive_icon_%282020%29.svg.png' },
-                    { name: 'Docs', url: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Docs_2020.webp' },
-                    { name: 'Sheets', url: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Google_Sheets_logo_%282014-2020%29.svg.png' },
-                    { name: 'Gmail', url: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Google_Gmail_Logo_512px.png' },
-                    { name: 'Calendar', url: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Google_Calendar_icon_%282020%29.svg.png' },
-                    { name: 'Outlook', url: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Microsoft_Outlook_Icon_%282025%E2%80%93present%29.svg.png' },
+                    { name: 'Drive', url: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Google_Drive_icon_%282020%29.svg.png' },
+                    { name: 'Docs', url: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Docs_2020.webp' },
+                    { name: 'Sheets', url: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Google_Sheets_logo_%282014-2020%29.svg.png' },
+                    { name: 'Gmail', url: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Google_Gmail_Logo_512px.png' },
+                    { name: 'Calendar', url: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Google_Calendar_icon_%282020%29.svg.png' },
+                    { name: 'Outlook', url: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Microsoft_Outlook_Icon_%282025%E2%80%93present%29.svg.png' },
                   ].map(app => (
                     <img
                       key={app.name}
@@ -1117,8 +1117,8 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
           <div className="max-w-7xl mx-auto px-4 sm:px-6">
             <div className="relative rounded-3xl overflow-hidden">
               {(() => {
-                const lightImageUrl = 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/FreshFrontCreative.jpeg';
-                const darkImageUrl = 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Generated%20Image%20December%2014%2C%202025%20-%201_23AM%20%281%29.png';
+                const lightImageUrl = 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/FreshFrontCreative.jpeg';
+                const darkImageUrl = 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Generated%20Image%20December%2014%2C%202025%20-%201_23AM%20%281%29.png';
                 const imageUrl = isDarkMode ? darkImageUrl : lightImageUrl;
 
                 return (
@@ -1291,10 +1291,10 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
 
                   <div className="mt-6 grid grid-cols-2 gap-4">
                     {[
-                      { icon: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/copy.png', title: 'Text to World', desc: 'Describe your scene' },
-                      { icon: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/camera.png', title: 'Image to 3D', desc: 'Upload references' },
-                      { icon: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/joystick.png', title: 'Interactive Controls', desc: 'Explore freely' },
-                      { icon: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/share.png', title: 'Hi-Res Export', desc: 'Production ready' },
+                      { icon: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/copy.png', title: 'Text to World', desc: 'Describe your scene' },
+                      { icon: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/camera.png', title: 'Image to 3D', desc: 'Upload references' },
+                      { icon: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/joystick.png', title: 'Interactive Controls', desc: 'Explore freely' },
+                      { icon: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/share.png', title: 'Hi-Res Export', desc: 'Production ready' },
                     ].map(item => (
                       <div
                         key={item.title}
@@ -1333,7 +1333,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
                   >
                     <div className="aspect-[16/9] w-full bg-black relative">
                       <video
-                        src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Introducing%20Marble%20by%20World%20Labs%20-%20World%20Labs%20%281080p%2C%20h264%2C%20youtube%29.mp4"
+                        src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Introducing%20Marble%20by%20World%20Labs%20-%20World%20Labs%20%281080p%2C%20h264%2C%20youtube%29.mp4"
                         className="w-full h-full object-cover"
                         autoPlay
                         loop
@@ -1401,7 +1401,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
                   } style={{ backdropFilter: 'blur(8px)' }}>
                     <div className="flex items-center gap-4 mb-3">
                       <div className={"w-10 h-10 rounded-xl flex items-center justify-center shrink-0 " + (isDarkMode ? 'bg-blue-500/20' : 'bg-blue-100')}>
-                        <img src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/books%20%281%29.png" alt="Context" className="w-6 h-6 object-contain" />
+                        <img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/books%20%281%29.png" alt="Context" className="w-6 h-6 object-contain" />
                       </div>
                       <span className={"font-semibold " + (isDarkMode ? 'text-white' : 'text-gray-900')}>Context</span>
                     </div>
@@ -1458,7 +1458,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
                   } style={{ backdropFilter: 'blur(8px)' }}>
                     <div className="flex items-center gap-4 mb-3">
                       <div className={"w-10 h-10 rounded-xl flex items-center justify-center shrink-0 " + (isDarkMode ? 'bg-pink-500/20' : 'bg-pink-100')}>
-                        <img src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/network.png" alt="Execution" className="w-6 h-6 object-contain" />
+                        <img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/network.png" alt="Execution" className="w-6 h-6 object-contain" />
                       </div>
                       <span className={"font-semibold " + (isDarkMode ? 'text-white' : 'text-gray-900')}>Execution</span>
                     </div>
@@ -1483,7 +1483,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
               >
                 <div className="flex items-center gap-4 mb-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/global-research.png"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/global-research.png"
                     alt="Research"
                     className="w-16 h-16 object-contain"
                   />
@@ -1506,7 +1506,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
               >
                 <div className="flex items-center gap-4 mb-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/palette.png"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/palette.png"
                     alt="Content"
                     className="w-16 h-16 object-contain"
                   />
@@ -1554,7 +1554,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
               >
                 <div className="flex items-center gap-4 mb-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/3d-report.png"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/3d-report.png"
                     alt="Documents"
                     className="w-16 h-16 object-contain"
                   />
@@ -1577,7 +1577,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
               >
                 <div className="flex items-center gap-4 mb-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/shop.png"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/shop.png"
                     alt="E-commerce"
                     className="w-16 h-16 object-contain"
                   />
@@ -1600,7 +1600,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
               >
                 <div className="flex items-center gap-4 mb-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/check.png"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/check.png"
                     alt="Project Management"
                     className="w-16 h-16 object-contain"
                   />
@@ -1623,7 +1623,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
               >
                 <div className="flex items-center gap-4 mb-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/magnet.png"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/magnet.png"
                     alt="CRM"
                     className="w-16 h-16 object-contain"
                   />
@@ -1646,7 +1646,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
               >
                 <div className="flex items-center gap-4 mb-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/planet-earth.png"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/planet-earth.png"
                     alt="3D Media"
                     className="w-16 h-16 object-contain"
                   />
@@ -1669,7 +1669,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
               >
                 <div className="flex items-center gap-4 mb-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/layout.png"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/layout.png"
                     alt="Browser Automation"
                     className="w-16 h-16 object-contain"
                   />
@@ -1692,7 +1692,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
               >
                 <div className="flex items-center gap-4 mb-4">
                   <img
-                    src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/microphone.png"
+                    src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/microphone.png"
                     alt="Phone Agent"
                     className="w-16 h-16 object-contain"
                   />
@@ -1716,7 +1716,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
                 }
               >
                 <img
-                  src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/chat.png"
+                  src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/chat.png"
                   alt="Chat Mode"
                   className="w-12 h-12 object-contain"
                 />
@@ -1734,7 +1734,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
                 }
               >
                 <img
-                  src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/microphone.png"
+                  src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/microphone.png"
                   alt="Voice Mode"
                   className="w-12 h-12 object-contain"
                 />
@@ -1768,7 +1768,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
                   }>
                     <div className="aspect-[16/10] w-full bg-black relative">
                       <img
-                        src="https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/liveaivideo.gif"
+                        src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/liveaivideo.gif"
                         alt="AI Assistant Visual Recognition"
                         className="w-full h-full object-cover"
                       />
@@ -1893,7 +1893,7 @@ export const HomePage: React.FC<HomePageProps> = ({ isDarkMode, toggleTheme, onA
                   }>
                     <div className="aspect-square w-full bg-black relative">
                       <img
-                        src="https://ci6wjac8e4nwiqin.public.blob.vercel-storage.com/phoneagent.png"
+                        src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/phoneagent.png"
                         alt="AI Phone Agent Interface"
                         className="w-full h-full object-cover"
                       />
