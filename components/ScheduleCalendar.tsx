@@ -48,12 +48,12 @@ interface ScheduleCalendarProps {
 }
 
 const PLATFORM_ICONS: Record<string, React.ReactNode> = {
-    facebook: <img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp" className="w-4 h-4 inline-block object-contain" alt="Facebook" />,
-    instagram: <img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp" className="w-4 h-4 inline-block object-contain" alt="Instagram" />,
-    tiktok: <img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/tiktok-6338432_1280.webp" className="w-4 h-4 inline-block object-contain" alt="TikTok" />,
-    youtube: <img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png" className="w-4 h-4 inline-block object-contain" alt="YouTube" />,
-    linkedin: <img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/LinkedIn_logo_initials.png" className="w-4 h-4 inline-block object-contain" alt="LinkedIn" />,
-    x: <img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/X-Logo-Round-Color.png" className="w-4 h-4 inline-block object-contain" alt="X" />,
+    facebook: <img src="https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp" className="w-4 h-4 inline-block object-contain" alt="Facebook" />,
+    instagram: <img src="https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp" className="w-4 h-4 inline-block object-contain" alt="Instagram" />,
+    tiktok: <img src="https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/tiktok-6338432_1280.webp" className="w-4 h-4 inline-block object-contain" alt="TikTok" />,
+    youtube: <img src="https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png" className="w-4 h-4 inline-block object-contain" alt="YouTube" />,
+    linkedin: <img src="https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/LinkedIn_logo_initials.png" className="w-4 h-4 inline-block object-contain" alt="LinkedIn" />,
+    x: <img src="https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/X-Logo-Round-Color.png" className="w-4 h-4 inline-block object-contain" alt="X" />,
     gmail: <svg className="w-4 h-4 text-red-500" viewBox="0 0 24 24" fill="currentColor"><path d="M24 5.457v13.909c0 .904-.732 1.636-1.636 1.636h-3.819V11.73L12 16.64l-6.545-4.91v9.273H1.636A1.636 1.636 0 0 1 0 19.366V5.457c0-2.023 2.309-3.178 3.927-1.964L5.455 4.64 12 9.548l6.545-4.91 1.528-1.145C21.69 2.28 24 3.434 24 5.457z" /></svg>,
     outlook: <svg className="w-4 h-4 text-[#0078D4]" viewBox="0 0 24 24" fill="currentColor"><path d="M7.88 12.04q0 .45-.11.87-.1.41-.33.74-.22.33-.58.52-.37.2-.87.2t-.85-.2q-.35-.21-.57-.55-.22-.33-.33-.75-.1-.42-.1-.86t.1-.87q.1-.43.34-.76.22-.34.59-.54.36-.2.87-.2t.86.2q.35.21.57.55.22.34.31.77.1.43.1.88m-.25-4.82h8.98l.03.95H7.67l-.04-.95M14.12 5h-4.4q-.83 0-1.5.58-.66.57-.7 1.38l.001.52h8.8V5m-4.4 12.35V22H5.62V8.2q0-.75.57-1.32.57-.58 1.33-.58h4.4m0-1.12h-4.4q-.94 0-1.63.64-.68.65-.68 1.58V22H7.6V8.98q0-.64.43-1.07.44-.43 1.06-.43h4.4V17.35M22 8.13V22H9.72V17.35h7.88V8.13H22m-2.4 13.27h-4.07v-4.02l4.07-.001v4.021" /></svg>
 };
