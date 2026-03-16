@@ -12,32 +12,32 @@ interface SocialAuthPromptProps {
 const PLATFORM_INFO: Record<SocialPlatform, { name: string; logo: string; color: string }> = {
     facebook: {
         name: 'Facebook',
-        logo: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp',
+        logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp',
         color: '#1877F2',
     },
     instagram: {
         name: 'Instagram',
-        logo: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp',
+        logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp',
         color: 'linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888)',
     },
     x: {
         name: 'X',
-        logo: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/X-Logo-Round-Color.png',
+        logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/X-Logo-Round-Color.png',
         color: '#000000',
     },
     tiktok: {
         name: 'TikTok',
-        logo: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/tiktok-6338432_1280.webp',
+        logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/tiktok-6338432_1280.webp',
         color: '#000000',
     },
     youtube: {
         name: 'YouTube',
-        logo: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png',
+        logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png',
         color: '#FF0000',
     },
     linkedin: {
         name: 'LinkedIn',
-        logo: 'https://cI6wjaC8e4NWiqIn.public.blob.vercel-storage.com/LinkedIn_logo_initials.png',
+        logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/LinkedIn_logo_initials.png',
         color: '#0A66C2',
     },
 };
