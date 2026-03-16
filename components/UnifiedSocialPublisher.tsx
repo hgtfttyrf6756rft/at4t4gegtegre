@@ -136,12 +136,12 @@ interface UnifiedSocialPublisherProps {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PLATFORMS: PlatformConfig[] = [
-    { id: 'x', name: 'X', icon: '𝕏', logoUrl: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/X-Logo-Round-Color.png', color: '#000000', supportsText: true, supportsImage: true, supportsVideo: true },
-    { id: 'linkedin', name: 'LinkedIn', icon: '💼', logoUrl: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/LinkedIn_logo_initials.png', color: '#0A66C2', supportsText: true, supportsImage: true, supportsVideo: true },
-    { id: 'facebook', name: 'Facebook', icon: '📘', logoUrl: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp', color: '#1877F2', supportsText: true, supportsImage: true, supportsVideo: true },
-    { id: 'instagram', name: 'Instagram', icon: '📷', logoUrl: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp', color: '#E4405F', supportsText: false, supportsImage: true, supportsVideo: true },
-    { id: 'tiktok', name: 'TikTok', icon: '🎵', logoUrl: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/tiktok-6338432_1280.webp', color: '#000000', supportsText: false, supportsImage: true, supportsVideo: true },
-    { id: 'youtube', name: 'YouTube', icon: '▶️', logoUrl: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png', color: '#FF0000', supportsText: false, supportsImage: false, supportsVideo: true },
+    { id: 'x', name: 'X', icon: '𝕏', logoUrl: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/X-Logo-Round-Color.png', color: '#000000', supportsText: true, supportsImage: true, supportsVideo: true },
+    { id: 'linkedin', name: 'LinkedIn', icon: '💼', logoUrl: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/LinkedIn_logo_initials.png', color: '#0A66C2', supportsText: true, supportsImage: true, supportsVideo: true },
+    { id: 'facebook', name: 'Facebook', icon: '📘', logoUrl: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp', color: '#1877F2', supportsText: true, supportsImage: true, supportsVideo: true },
+    { id: 'instagram', name: 'Instagram', icon: '📷', logoUrl: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp', color: '#E4405F', supportsText: false, supportsImage: true, supportsVideo: true },
+    { id: 'tiktok', name: 'TikTok', icon: '🎵', logoUrl: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/tiktok-6338432_1280.webp', color: '#000000', supportsText: false, supportsImage: true, supportsVideo: true },
+    { id: 'youtube', name: 'YouTube', icon: '▶️', logoUrl: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png', color: '#FF0000', supportsText: false, supportsImage: false, supportsVideo: true },
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1907,9 +1907,9 @@ export const UnifiedSocialPublisher: React.FC<UnifiedSocialPublisherProps> = ({
                         <div className="flex gap-3">
                             {(['TEXT', 'IMAGE', 'VIDEO'] as PostType[]).map(type => {
                                 const icons = {
-                                    TEXT: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/font.png',
-                                    IMAGE: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/picture.png',
-                                    VIDEO: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/3d-video.png'
+                                    TEXT: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/font.png',
+                                    IMAGE: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/picture.png',
+                                    VIDEO: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/3d-video.png'
                                 };
                                 const labels = {
                                     TEXT: 'Text',
