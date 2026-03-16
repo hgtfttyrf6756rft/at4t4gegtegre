@@ -136,16 +136,16 @@ const SESSION_COLORS = [
 ];
 
 const PLATFORM_LOGOS: Record<string, string> = {
-  facebook: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp',
-  instagram: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp',
-  tiktok: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/tiktok-6338432_1280.webp',
-  youtube: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png',
-  linkedin: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/LinkedIn_logo_initials.png',
-  x: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/X-Logo-Round-Color.png',
-  googledocs: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Docs_2020.webp',
-  googlesheets: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Google_Sheets_logo_%282014-2020%29.svg.png',
-  googledrive: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Google_Drive_icon_%282020%29.svg.png',
-  blog: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/blog-8419.svg.png',
+  facebook: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/2021_Facebook_icon.svg.webp',
+  instagram: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/Instagram_logo_2016.svg.webp',
+  tiktok: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/tiktok-6338432_1280.webp',
+  youtube: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/YouTube_full-color_icon_%282017%29.svg.png',
+  linkedin: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/LinkedIn_logo_initials.png',
+  x: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/X-Logo-Round-Color.png',
+  googledocs: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/Docs_2020.webp',
+  googlesheets: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/Google_Sheets_logo_%282014-2020%29.svg.png',
+  googledrive: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/Google_Drive_icon_%282020%29.svg.png',
+  blog: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/blog-8419.svg.png',
 };
 
 const STRIPE_COUNTRIES = [
@@ -13549,7 +13549,7 @@ Requirements:
                             </svg>
                           ) : (
                             <img
-                              src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/Docs_2020.webp"
+                              src="https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/Docs_2020.webp"
                               alt="Docs"
                               className="w-5 h-5 object-contain"
                             />
@@ -17039,7 +17039,7 @@ Write a concise, persuasive description (2-3 sentences) that highlights key feat
                 <div className="flex items-center gap-4">
                   <div className={`p-1 rounded-2xl ${isDarkMode ? 'bg-white/5' : 'bg-transparent'}`}>
                     <img
-                      src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/app-store.png"
+                      src="https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/app-store.png"
                       alt="App Builder"
                       className="w-12 h-12 object-contain"
                     />
@@ -17085,7 +17085,7 @@ Write a concise, persuasive description (2-3 sentences) that highlights key feat
               <div className="space-y-10">
                 <div className={`p-5 rounded-2xl border backdrop-blur-md transition-all ${isDarkMode ? 'bg-blue-500/5 border-blue-500/20 text-blue-400' : 'bg-blue-50/50 border-blue-100 text-blue-700 shadow-sm'}`}>
                   <div className="flex items-start gap-4">
-                    <img src="https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/apple-icon-27.png" alt="Apple Developer" className="w-8 h-8 object-contain mt-0.5" />
+                    <img src="https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/apple-icon-27.png" alt="Apple Developer" className="w-8 h-8 object-contain mt-0.5" />
                     <div className="text-sm">
                       <p className="font-bold mb-1 tracking-tight">Apple Developer Program</p>
                       <p className="opacity-80 leading-relaxed font-medium">Publishing to the App Store requires an Apple Developer membership ($99/year). We build the app, you own the store presence. <a href="https://developer.apple.com/support/compare-memberships/" target="_blank" rel="noopener noreferrer" className="underline font-bold hover:text-blue-500 transition-colors">Compare memberships</a>.</p>
@@ -17099,8 +17099,8 @@ Write a concise, persuasive description (2-3 sentences) that highlights key feat
                     <label className={`block text-sm font-semibold mb-3 ${isDarkMode ? 'text-gray-300' : 'text-gray-700'}`}>1. Select Platform</label>
                     <div className="flex gap-4">
                       {[
-                        { name: 'iOS', logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/icon_appstore__ev0z770zyxoy_large_2x.png' },
-                        { name: 'Android', logo: 'https://jSRr1lJM4vPVantF.public.blob.vercel-storage.com/888857.png' }
+                        { name: 'iOS', logo: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/icon_appstore__ev0z770zyxoy_large_2x.png' },
+                        { name: 'Android', logo: 'https://I3mnKOjlTrVNlYat.public.blob.vercel-storage.com/888857.png' }
                       ].map(platform => (
                         <label key={platform.name} className={`flex-1 flex flex-col items-center justify-center gap-3 p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 ${appPlatform.includes(platform.name) ? (isDarkMode ? 'border-orange-500 bg-orange-500/10 shadow-[0_0_20px_rgba(249,115,22,0.15)]' : 'border-orange-500 bg-orange-50 shadow-sm') : (isDarkMode ? 'border-[#1d1d1f] bg-[#1d1d1f]/30 text-[#86868b] hover:border-gray-700' : 'border-gray-100 bg-gray-50/50 text-gray-500 hover:border-gray-200')}`}>
                           <input
