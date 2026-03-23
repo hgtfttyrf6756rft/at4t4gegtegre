@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import * as dotenv from 'dotenv';
-import { GoogleGenAI, GenerateContentResponse, Type, Schema } from '@google/genai';
+import { GoogleGenAI, Type, Schema } from '@google/genai';
 import * as querystring from 'querystring';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
@@ -34,30 +34,35 @@ if (!GOOGLE_API_KEY) {
     process.exit(1);
 }
 
-// Initialize Firebase Admin
-const firebaseConfig = {
-    project_id: process.env.FIREBASE_PROJECT_ID,
-    client_email: process.env.FIREBASE_CLIENT_EMAIL,
-    private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-};
+// ─── Firebase Admin (lazy / non-blocking init) ────────────────────────────────
+// IMPORTANT: We do NOT call initFirebase() during module load.
+// The HTTP server must start listening FIRST so Twilio's 15s window is met.
+let db: ReturnType<typeof getFirestore> | null = null;
+let dbInitialized = false;
 
-if (!firebaseConfig.project_id || !firebaseConfig.client_email || !firebaseConfig.private_key) {
-    console.error("Error: Missing Firebase environment variables (FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY).");
-    process.exit(1);
-}
+function initFirebase(): ReturnType<typeof getFirestore> | null {
+    if (dbInitialized) return db;
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
 
-if (!getApps().length) {
-    try {
-        initializeApp({
-            credential: cert(firebaseConfig as any),
-        });
-        console.log("Firebase Admin initialized successfully.");
-    } catch (error) {
-        console.error("Failed to initialize Firebase Admin:", error);
-        process.exit(1);
+    if (!projectId || !clientEmail || !privateKey) {
+        console.error("[Firebase] Missing environment variables. Running without Firestore.");
+        dbInitialized = true;
+        return null;
     }
+    try {
+        if (!getApps().length) {
+            initializeApp({ credential: cert({ projectId, clientEmail, privateKey } as any) });
+        }
+        db = getFirestore();
+        console.log("[Firebase] Admin initialized successfully.");
+    } catch (error) {
+        console.error("[Firebase] Initialization failed:", error);
+    }
+    dbInitialized = true;
+    return db;
 }
-const db = getFirestore();
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: GOOGLE_API_KEY });
@@ -86,92 +91,97 @@ const leadCaptureTool = {
 // Store active chat sessions
 const sessions: { [callSid: string]: { contents: any[], uid?: string, agentName?: string, agentInstructions?: string, systemPrompt?: string } } = {};
 
-// Helper to normalize phone numbers for comparison
+// Helper to normalize phone numbers
 function normalizePhoneNumber(phone: string): string {
     if (!phone) return '';
-    // Keep only digits and the optional leading plus
-    const normalized = phone.replace(/[^\d+]/g, '');
-    return normalized;
+    return phone.replace(/[^\d+]/g, '');
 }
 
-// Helper to find user config by phone number
+// Helper to find user config by phone number — with a 3s timeout so TwiML is always returned quickly
 async function getUserConfig(phoneNumber: string): Promise<any> {
     if (!phoneNumber) return null;
+    const firestore = initFirebase();
+    if (!firestore) return null;
+
     const normalizedTarget = normalizePhoneNumber(phoneNumber);
     const noPlusTarget = normalizedTarget.startsWith('+') ? normalizedTarget.substring(1) : normalizedTarget;
 
-    try {
-        const usersRef = db.collection('users');
+    // Race against a 3-second timeout so TwiML is always returned within Twilio's 15s window
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => {
+        console.warn(`[Config] Lookup timed out for ${phoneNumber}. Proceeding with defaults.`);
+        resolve(null);
+    }, 3000));
 
-        // Twilio numbers are typically stored directly in E.164 format (e.g., +15555555555)
-        // Perform a fast, direct database query instead of scanning all users
-        const searchValues = [
-            phoneNumber,
-            normalizedTarget,
-            noPlusTarget,
-            `+${noPlusTarget}`
-        ];
+    const lookupPromise = (async () => {
+        try {
+            const usersRef = firestore.collection('users');
+            const searchValues = [phoneNumber, normalizedTarget, noPlusTarget, `+${noPlusTarget}`];
+            const uniqueValues = [...new Set(searchValues)].slice(0, 10);
+            const snapshot = await usersRef.where('agentPhoneNumber', 'in', uniqueValues).limit(1).get();
 
-        // Remove duplicates and only keep up to 10 (Firestore 'in' limit)
-        const uniqueValues = [...new Set(searchValues)].slice(0, 10);
-
-        const snapshot = await usersRef.where('agentPhoneNumber', 'in', uniqueValues).limit(1).get();
-
-        if (!snapshot.empty) {
-            const doc = snapshot.docs[0];
-            return { uid: doc.id, ...doc.data() };
-        }
-
-        // Extremely rare fallback (if a user manually entered a weird format like +1 (555) 555-5555 in the UI)
-        console.warn(`[Config] Direct lookup missed for ${phoneNumber}. Falling back to full scan (slow).`);
-        const allUsers = await usersRef.where('agentPhoneNumber', '>', '').get();
-        for (const doc of allUsers.docs) {
-            const data = doc.data();
-            if (data.agentPhoneNumber) {
-                const userPhone = normalizePhoneNumber(data.agentPhoneNumber);
-                const userNoPlus = userPhone.startsWith('+') ? userPhone.substring(1) : userPhone;
-                if (userPhone === normalizedTarget || userNoPlus === noPlusTarget) {
-                    return { uid: doc.id, ...data };
-                }
+            if (!snapshot.empty) {
+                const doc = snapshot.docs[0];
+                return { uid: doc.id, ...doc.data() };
             }
+            console.warn(`[Config] No user found for ${phoneNumber}.`);
+            return null;
+        } catch (err) {
+            console.error("[Config] Firestore Lookup Error:", err);
+            return null;
         }
+    })();
 
-    } catch (err) {
-        console.error("[Config] Firestore Lookup Error:", err);
-    }
-    return null;
+    return Promise.race([lookupPromise, timeoutPromise]);
 }
 
-// Create HTTP Server
+// ─── HTTP Server ──────────────────────────────────────────────────────────────
 const server = http.createServer(async (req, res) => {
+    // Health check endpoint — allows Render/UptimeRobot to keep the server awake
+    if (req.method === 'GET' && (req.url === '/health' || req.url === '/')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), wsUrl: WS_URL }));
+        return;
+    }
+
+    // GET /twiml — for health probe / browser test
+    if (req.method === 'GET' && req.url === '/twiml') {
+        res.writeHead(200, { 'Content-Type': 'text/xml' });
+        res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Voice server is running.</Say></Response>`);
+        return;
+    }
+
     if (req.method === 'POST' && req.url === '/twiml') {
         let body = '';
         req.on('data', chunk => { body += chunk.toString(); });
         req.on('end', async () => {
+            const startTime = Date.now();
             const postData = querystring.parse(body);
             const to = postData.To as string || '';
             const from = postData.From as string || '';
 
-            console.log(`[Twiml] Incoming call to ${to} from ${from}`);
+            console.log(`[TwiML] Incoming call to ${to} from ${from}`);
 
-            // Fetch dynamic user config
-            const userData = await getUserConfig(to);
             let welcomeGreeting = WELCOME_GREETING;
-            let voice = 'en-US-Journey-F'; // Default female-leaning high quality voice
-            let ttsProvider = 'Google';
+            let voice = 'en-US-Journey-F';
+            const ttsProvider = 'Google';
 
-            if (userData?.agentPhoneConfig?.enabled) {
-                if (userData.agentPhoneConfig.welcomeGreeting) {
-                    welcomeGreeting = userData.agentPhoneConfig.welcomeGreeting;
+            try {
+                const userData = await getUserConfig(to);
+                if (userData?.agentPhoneConfig?.enabled) {
+                    if (userData.agentPhoneConfig.welcomeGreeting) {
+                        welcomeGreeting = userData.agentPhoneConfig.welcomeGreeting;
+                    }
+                    if (userData.agentPhoneConfig.voiceGender === 'male') {
+                        voice = 'en-US-Journey-D';
+                    } else if (userData.agentPhoneConfig.voiceGender === 'female') {
+                        voice = 'en-US-Journey-F';
+                    }
                 }
-
-                // Map gender/voice preference
-                if (userData.agentPhoneConfig.voiceGender === 'male') {
-                    voice = 'en-US-Journey-D'; // Standard high quality male
-                } else if (userData.agentPhoneConfig.voiceGender === 'female') {
-                    voice = 'en-US-Journey-F';
-                }
+            } catch (e) {
+                console.error('[TwiML] Error fetching user config:', e);
             }
+
+            console.log(`[TwiML] Responding in ${Date.now() - startTime}ms`);
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -196,7 +206,7 @@ const server = http.createServer(async (req, res) => {
     }
 });
 
-// Create WebSocket Server attached to HTTP Server
+// ─── WebSocket Server ─────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 wss.on('connection', (ws: WebSocket) => {
@@ -218,7 +228,6 @@ wss.on('connection', (ws: WebSocket) => {
                 let uid = '';
                 let agentInstructions = '';
 
-                // Lookup user by phone number
                 const userData = await getUserConfig(to);
                 if (userData) {
                     uid = userData.uid;
@@ -229,7 +238,6 @@ wss.on('connection', (ws: WebSocket) => {
                         let projectListContext = '';
 
                         if (config.leadCaptureEnabled) {
-                            // Lead Capture Mode: Restrict to custom instructions and lead fields
                             if (config.leadFields?.length > 0) {
                                 const fields = config.leadFields.map((f: any) => `${f.name}${f.required ? ' (required)' : ''}`).join(', ');
                                 customInstructions += `\n\nLEAD CAPTURE TASK: Your primary goal is to politely collect the following information from the caller: ${fields}. 
@@ -239,25 +247,24 @@ wss.on('connection', (ws: WebSocket) => {
                             }
                             console.log(`[WS] Lead Capture mode for user ${uid}. Restricting context.`);
                         } else {
-                            // Normal Assistant Mode: Add project context
                             console.log(`[WS] Normal assistant mode for user ${uid}. Injecting project context.`);
-                            const projectsSnapshot = await db.collection('users').doc(uid).collection('projects')
-                                .orderBy('lastModified', 'desc').limit(10).get();
+                            const firestore = initFirebase();
+                            if (firestore) {
+                                const projectsSnapshot = await firestore.collection('users').doc(uid).collection('projects')
+                                    .orderBy('lastModified', 'desc').limit(10).get();
 
-                            const projectList = projectsSnapshot.docs.map(d => {
-                                const data = d.data();
-                                return `"${data.name}" (ID: ${d.id})${data.description ? ` - ${data.description.substring(0, 50)}` : ''}`;
-                            });
+                                const projectList = projectsSnapshot.docs.map(d => {
+                                    const pData = d.data();
+                                    return `"${pData.name}" (ID: ${d.id})${pData.description ? ` - ${pData.description.substring(0, 50)}` : ''}`;
+                                });
 
-                            if (projectList.length > 0) {
-                                projectListContext = `\n\nUSER'S PROJECTS:\n${projectList.join('\n')}`;
-                            } else {
-                                projectListContext = `\n\nUSER'S PROJECTS: The user has no projects yet.`;
+                                projectListContext = projectList.length > 0
+                                    ? `\n\nUSER'S PROJECTS:\n${projectList.join('\n')}`
+                                    : `\n\nUSER'S PROJECTS: The user has no projects yet.`;
+
+                                const userProfileInfo = `\n\nUSER PROFILE: ${userData.displayName || 'Unnamed User'}${userData.description ? ` - ${userData.description}` : ''}`;
+                                projectListContext = userProfileInfo + projectListContext;
                             }
-
-                            // Add user profile info
-                            const userProfileInfo = `\n\nUSER PROFILE: ${userData.displayName || 'Unnamed User'}${userData.description ? ` - ${userData.description}` : ''}`;
-                            projectListContext = userProfileInfo + projectListContext;
                         }
 
                         systemPrompt = `${DEFAULT_SYSTEM_PROMPT}\n\nUSER'S AGENT INSTRUCTIONS: ${customInstructions}${projectListContext}`;
@@ -270,7 +277,6 @@ wss.on('connection', (ws: WebSocket) => {
                     console.warn(`[WS] No user found for phone number: ${to}`);
                 }
 
-                // Initialize session structure
                 sessions[callSid!] = {
                     contents: [],
                     uid,
@@ -288,19 +294,19 @@ wss.on('connection', (ws: WebSocket) => {
                 session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
 
                 try {
-                    const config = sessions[callSid].uid ? (await getUserConfig(callerNumber))?.agentPhoneConfig : null;
+                    const firestore = initFirebase();
+                    const config = (session.uid && firestore) ? (await getUserConfig(callerNumber))?.agentPhoneConfig : null;
                     const leadCaptureEnabled = !!config?.leadCaptureEnabled;
 
                     const response = await ai.models.generateContent({
-                        model: 'gemini-3-flash-preview',
+                        model: 'gemini-2.0-flash',
                         contents: session.contents,
                         config: {
                             systemInstruction: session.systemPrompt,
-                            tools: leadCaptureEnabled ? [leadCaptureTool] : [] // Voice agent currently only has leadCaptureTool
+                            tools: leadCaptureEnabled ? [leadCaptureTool] : []
                         }
                     });
 
-                    // Update contents with model response
                     if (response.candidates?.[0]?.content) {
                         session.contents.push(response.candidates[0].content);
                     }
@@ -317,9 +323,10 @@ wss.on('connection', (ws: WebSocket) => {
                             const call = part.functionCall;
                             if (call.name === 'saveCapturedLead') {
                                 console.log(`[WS] Saving Lead for call ${callSid}:`, call.args);
-                                if (session.uid) {
+                                const firestore2 = initFirebase();
+                                if (session.uid && firestore2) {
                                     try {
-                                        await db.collection('users').doc(session.uid).collection('phoneAgentLeads').add({
+                                        await firestore2.collection('users').doc(session.uid).collection('phoneAgentLeads').add({
                                             callerNumber,
                                             data: (call.args as any).data,
                                             agentInstructions: session.agentInstructions,
@@ -331,7 +338,6 @@ wss.on('connection', (ws: WebSocket) => {
                                     }
                                 }
 
-                                // Send tool response back to Gemini to continue conversation
                                 session.contents.push({
                                     role: 'user',
                                     parts: [{
@@ -343,7 +349,7 @@ wss.on('connection', (ws: WebSocket) => {
                                 });
 
                                 const followup = await ai.models.generateContent({
-                                    model: 'gemini-3-flash-preview',
+                                    model: 'gemini-2.0-flash',
                                     contents: session.contents,
                                     config: {
                                         systemInstruction: session.systemPrompt,
@@ -353,7 +359,7 @@ wss.on('connection', (ws: WebSocket) => {
 
                                 if (followup.candidates?.[0]?.content) {
                                     session.contents.push(followup.candidates[0].content);
-                                    const textPart = followup.candidates[0].content.parts.find(p => p.text);
+                                    const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
                                     if (textPart?.text) {
                                         responseText = textPart.text;
                                     }
@@ -362,7 +368,6 @@ wss.on('connection', (ws: WebSocket) => {
                         }
                     }
 
-                    // Send response back to Twilio
                     ws.send(JSON.stringify({
                         type: 'text',
                         token: responseText,
@@ -394,7 +399,12 @@ wss.on('connection', (ws: WebSocket) => {
     });
 });
 
+// ─── Start Server ─────────────────────────────────────────────────────────────
+// IMPORTANT: Start listening FIRST, before Firebase init.
+// This ensures the server meets Twilio's 15s window even on cold starts.
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Voice Server listening on port ${PORT}`);
-    console.log(`WebSocket URL for Twilio: ${WS_URL}`);
+    console.log(`[VoiceServer] Listening on port ${PORT}`);
+    console.log(`[VoiceServer] WebSocket URL for Twilio: ${WS_URL}`);
+    // Initialize Firebase AFTER the server is already accepting connections
+    setImmediate(() => initFirebase());
 });
