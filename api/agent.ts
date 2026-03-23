@@ -241,32 +241,27 @@ export default {
         // Webhook handler for Twilio (async pattern to avoid 15s timeout)
         if ((op === 'webhook' || op === '') && request.method === 'POST') {
             const contentType = request.headers.get('Content-Type') || '';
-            const db = getFirestore(agentService.adminApp());
 
             // 1. Handle Twilio Event Streams and Debugger (JSON)
             if (contentType.includes('application/json')) {
                 try {
                     const payload = await request.json() as any;
-                    // Twilio Event Streams use CloudEvents format, Debugger uses custom JSON
                     const events = Array.isArray(payload) ? payload : [payload];
-
-                    for (const event of events) {
-                        const type = event.type || event.Level || 'unknown_event';
-                        const data = event.data || event.Payload || event;
-                        const messageSid = data.messageSid || data.sid || event.Sid || 'unknown';
-
-                        console.log(`[twilio-event] Received: ${type} for ${messageSid}`);
-
-                        // Log event to Firestore
-                        await db.collection('agentLogs').add({
-                            type: 'twilio_event',
-                            eventType: type,
-                            messageSid,
-                            data,
-                            timestamp: Date.now()
-                        });
-                    }
-
+                    // Fire-and-forget: log events but don't block the response
+                    (async () => {
+                        try {
+                            const db = getFirestore(agentService.adminApp());
+                            for (const event of events) {
+                                const type = event.type || event.Level || 'unknown_event';
+                                const data = event.data || event.Payload || event;
+                                const messageSid = data.messageSid || data.sid || event.Sid || 'unknown';
+                                console.log(`[twilio-event] Received: ${type} for ${messageSid}`);
+                                await db.collection('agentLogs').add({
+                                    type: 'twilio_event', eventType: type, messageSid, data, timestamp: Date.now()
+                                });
+                            }
+                        } catch (e) { console.error('[twilio-event] Firestore log error:', e); }
+                    })();
                     return new Response('OK', { status: 200 });
                 } catch (e: any) {
                     console.error('[twilio-event] Error parsing event:', e);
@@ -274,7 +269,7 @@ export default {
                 }
             }
 
-            // 2. Handle Standard Twilio Messaging Webhook (Form Data)
+            // 2. Parse form data for SMS/Voice webhooks
             let formData;
             try {
                 formData = await request.formData();
@@ -287,24 +282,28 @@ export default {
             const bodyStr = formData.get('Body')?.toString() || '';
             const messageSid = formData.get('MessageSid')?.toString() || 'unknown';
             const callSid = formData.get('CallSid')?.toString();
-
-            // Parse incoming MMS media
+            const callStatus = formData.get('CallStatus')?.toString();
             const numMedia = parseInt(formData.get('NumMedia')?.toString() || '0', 10);
 
-            if (callSid && !bodyStr && numMedia === 0) {
-                console.warn(`[twilio-webhook] Received Voice call webhook on Messaging endpoint. CallSid=${callSid}`);
+            // 3. IMPORTANT: Detect Voice calls FIRST — before ANY other validation.
+            // Twilio Voice webhooks send CallSid + CallStatus but no Body/MessageSid.
+            // This must redirect immediately to the Voice Server.
+            const isVoiceCall = !!callSid && (!!callStatus || !bodyStr);
+            if (isVoiceCall) {
+                console.log(`[twilio-webhook] Voice call detected. CallSid=${callSid}, CallStatus=${callStatus}, To=${to}, From=${from}`);
                 const voiceServerUrl = (process.env.VOICE_SERVER_URL || '').trim();
                 let redirectUrl = voiceServerUrl;
                 if (redirectUrl && !redirectUrl.endsWith('/twiml')) {
                     redirectUrl = redirectUrl.replace(/\/+$/, '') + '/twiml';
                 }
-
                 const twiml = redirectUrl
-                    ? `<?xml version="1.0" encoding="UTF-8"?>\n<Response><Redirect>${redirectUrl}</Redirect></Response>`
-                    : `<?xml version="1.0" encoding="UTF-8"?>\n<Response><Say>Voice integration is running on a different server. Please update your Twilio Voice Webhook URL.</Say></Response>`;
+                    ? `<?xml version="1.0" encoding="UTF-8"?>\n<Response><Redirect method="POST">${redirectUrl}</Redirect></Response>`
+                    : `<?xml version="1.0" encoding="UTF-8"?>\n<Response><Say>Voice agent is not configured. Please set VOICE_SERVER_URL.</Say></Response>`;
                 console.log(`[twilio-webhook] Redirecting voice call to: ${redirectUrl || 'N/A'}`);
                 return new Response(twiml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
             }
+
+            // 4. SMS/MMS — collect media URLs
             const incomingMediaUrls: string[] = [];
             for (let i = 0; i < numMedia; i++) {
                 const mediaUrl = formData.get(`MediaUrl${i}`)?.toString();
@@ -315,6 +314,8 @@ export default {
                 console.warn('[twilio-webhook] Missing To or Body/Media');
                 return new Response('Missing To or Body', { status: 400 });
             }
+
+            const db = getFirestore(agentService.adminApp());
 
             console.log(`[twilio-webhook] Incoming: From=${from} To=${to} MessageSid=${messageSid} Body="${bodyStr}" Media=${numMedia}`);
 
@@ -644,7 +645,7 @@ export default {
                     // 3. Call Gemini
                     const genaiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.API_KEY || '' });
                     const response = await genaiClient.models.generateContent({
-                        model: 'gemini-2.5-pro-exp-03-25',
+                        model: 'gemini-1.5-pro',
                         config: { systemInstruction: systemPrompt, temperature: 0.3 },
                         contents: [{ role: 'user', parts: [{ text: userMessage }] }],
                     });
