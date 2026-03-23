@@ -27,6 +27,43 @@ Please adhere to the following rules:
 3. Do not use any special characters like asterisks, bullet points, or emojis.
 4. Keep the conversation natural and engaging.`;
 
+// ─── Voice Mapping ────────────────────────────────────────────────────────────
+// The ProfileSettingsPage exposes Gemini voice names (e.g. 'Kore', 'Fenrir').
+// Twilio ConversationRelay with ttsProvider='Google' supports Chirp3 HD voices
+// in the format 'en-US-Chirp3-HD-{VoiceName}'.
+// Fallback Journey voices are used if no voiceName is configured.
+const GEMINI_FEMALE_VOICES = new Set([
+    'Achernar', 'Aoede', 'Autonoe', 'Callirrhoe', 'Despina', 'Erinome',
+    'Gacrux', 'Kore', 'Laomedeia', 'Leda', 'Pulcherrima', 'Sulafat',
+    'Vindemiatrix', 'Zephyr'
+]);
+const GEMINI_MALE_VOICES = new Set([
+    'Achird', 'Algenib', 'Alnilam', 'Charon', 'Enceladus', 'Fenrir',
+    'Iapetus', 'Orus', 'Puck', 'Rasalgethi', 'Sadachbia', 'Sadaltager',
+    'Schedar', 'Umbriel', 'Zubenelgenubi'
+]);
+
+function resolveVoice(config: any): string {
+    const voiceName = config?.voiceName || '';
+    const voiceGender = config?.voiceGender || 'female';
+    // If voiceName is a known Gemini voice, use Chirp3 HD format
+    if (voiceName && (GEMINI_FEMALE_VOICES.has(voiceName) || GEMINI_MALE_VOICES.has(voiceName))) {
+        return `en-US-Chirp3-HD-${voiceName}`;
+    }
+    // Fallback: use Google Journey voices based on gender
+    return voiceGender === 'male' ? 'en-US-Journey-D' : 'en-US-Journey-F';
+}
+
+// Escape special characters for use inside XML attributes
+function escapeXmlAttr(str: string): string {
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
 const GOOGLE_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
 if (!GOOGLE_API_KEY) {
@@ -171,11 +208,9 @@ const server = http.createServer(async (req, res) => {
                     if (userData.agentPhoneConfig.welcomeGreeting) {
                         welcomeGreeting = userData.agentPhoneConfig.welcomeGreeting;
                     }
-                    if (userData.agentPhoneConfig.voiceGender === 'male') {
-                        voice = 'en-US-Journey-D';
-                    } else if (userData.agentPhoneConfig.voiceGender === 'female') {
-                        voice = 'en-US-Journey-F';
-                    }
+                    // Resolve voice using voiceName (Gemini Chirp3 HD) or voiceGender fallback
+                    voice = resolveVoice(userData.agentPhoneConfig);
+                    console.log(`[TwiML] Resolved voice: ${voice} (voiceName=${userData.agentPhoneConfig.voiceName}, voiceGender=${userData.agentPhoneConfig.voiceGender})`);
                 }
             } catch (e) {
                 console.error('[TwiML] Error fetching user config:', e);
@@ -188,12 +223,12 @@ const server = http.createServer(async (req, res) => {
     <Connect>
         <ConversationRelay 
             url="${WS_URL}" 
-            welcomeGreeting="${welcomeGreeting}"
+            welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
             ttsProvider="${ttsProvider}"
             voice="${voice}"
         >
-            <Parameter name="to" value="${to}" />
-            <Parameter name="from" value="${from}" />
+            <Parameter name="to" value="${escapeXmlAttr(to)}" />
+            <Parameter name="from" value="${escapeXmlAttr(from)}" />
         </ConversationRelay>
     </Connect>
 </Response>`;
