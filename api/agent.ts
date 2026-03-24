@@ -389,7 +389,28 @@ export default {
             const callStatus = formData.get('CallStatus')?.toString();
             const numMedia = parseInt(formData.get('NumMedia')?.toString() || '0', 10);
 
-            // 3. IMPORTANT: Detect Voice calls FIRST — before ANY other validation.
+            // 3. Handle Twilio Error/Alert Webhooks (JSON payload hidden in form data)
+            const level = formData.get('Level')?.toString();
+            const payloadStr = formData.get('Payload')?.toString();
+            
+            if (level || payloadStr) {
+                try {
+                    let errCode = formData.get('ErrorCode')?.toString();
+                    let msgBody = formData.get('Msg')?.toString();
+                    
+                    if (payloadStr) {
+                        const parsed = JSON.parse(payloadStr);
+                        errCode = errCode || parsed.ErrorCode;
+                        msgBody = msgBody || parsed.Msg;
+                    }
+                    console.log(`[twilio-webhook] Received System/Error Webhook: ${errCode || 'N/A'} - ${msgBody || 'N/A'}`);
+                    return new Response('OK', { status: 200 }); // Must return 200 immediately to acknowledge the alert
+                } catch (e) {
+                    console.error('[twilio-webhook] Failed to parse Error webhook payload', e);
+                }
+            }
+
+            // 4. IMPORTANT: Detect Voice calls FIRST — before ANY other validation.
             // Twilio Voice webhooks send CallSid + CallStatus but no Body/MessageSid.
             // This must redirect immediately to the Voice Server.
             const isVoiceCall = !!callSid && (!!callStatus || !bodyStr);
@@ -407,32 +428,11 @@ export default {
                 return new Response(twiml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
             }
 
-            // 4. SMS/MMS — collect media URLs
+            // 5. SMS/MMS — collect media URLs
             const incomingMediaUrls: string[] = [];
             for (let i = 0; i < numMedia; i++) {
                 const mediaUrl = formData.get(`MediaUrl${i}`)?.toString();
                 if (mediaUrl) incomingMediaUrls.push(mediaUrl);
-            }
-
-            // 4. Handle Twilio Error/Alert Webhooks
-            const level = formData.get('Level')?.toString();
-            const payloadStr = formData.get('Payload')?.toString();
-            
-            if (level || payloadStr) {
-                try {
-                    let errCode = formData.get('ErrorCode')?.toString();
-                    let msgBody = formData.get('Msg')?.toString();
-                    
-                    if (payloadStr) {
-                        const parsed = JSON.parse(payloadStr);
-                        errCode = errCode || parsed.ErrorCode;
-                        msgBody = msgBody || parsed.Msg;
-                    }
-                    console.log(`[twilio-webhook] Received System/Error Webhook: ${errCode || 'N/A'} - ${msgBody || 'N/A'}`);
-                    return new Response('OK', { status: 200 });
-                } catch (e) {
-                    console.error('[twilio-webhook] Failed to parse Error webhook payload', e);
-                }
             }
 
             if (!to || (!bodyStr && numMedia === 0)) {
