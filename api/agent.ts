@@ -319,8 +319,7 @@ export default {
 
             console.log(`[twilio-webhook] Incoming: From=${from} To=${to} MessageSid=${messageSid} Body="${bodyStr}" Media=${numMedia}`);
 
-            // ─── NOTE MODE: silently store SMS as a note, no reply ─────────────
-            // Look up user by 'to' number and check if mode is 'note'
+            // ─── NOTE MODE: silently store SMS as a note (if trainer), or answer conversationally (if not)
             try {
                 const usersSnap = await db.collection('users')
                     .where('agentPhoneNumber', '==', to)
@@ -330,18 +329,32 @@ export default {
                     const userData = usersSnap.docs[0].data();
                     if (userData?.agentPhoneConfig?.mode === 'note' && userData?.agentPhoneConfig?.enabled) {
                         const uid = usersSnap.docs[0].id;
-                        const noteBody = bodyStr || '';
-                        if (noteBody.trim()) {
-                            await db.collection('users').doc(uid).collection('phoneAgentNotes').add({
-                                body: noteBody,
-                                from,
-                                timestamp: Date.now()
-                            });
-                            console.log(`[twilio-webhook] Note Mode: saved note from ${from} for user ${uid}`);
+                        
+                        const trainerStr = userData.agentPhoneConfig.trainerNumbers || '';
+                        const trainers = trainerStr.split(',').map((n: string) => n.replace(/\D/g, '')).filter(Boolean);
+                        const incomingNum = from.replace(/\D/g, '');
+                        
+                        // If trainers list is populated, check if incoming number is in it.
+                        // If trainers list is empty, we allow the note to be saved to prevent breaking existing setups, but it's recommended to set trainers.
+                        const isTrainer = trainers.length === 0 || trainers.includes(incomingNum);
+
+                        if (isTrainer) {
+                            const noteBody = bodyStr || '';
+                            if (noteBody.trim()) {
+                                await db.collection('users').doc(uid).collection('phoneAgentNotes').add({
+                                    body: noteBody,
+                                    from,
+                                    timestamp: Date.now()
+                                });
+                                console.log(`[twilio-webhook] Note Mode: saved note from ${from} for user ${uid}`);
+                            }
+                            // Return empty TwiML — no reply
+                            const twiml = `<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>`;
+                            return new Response(twiml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
+                        } else {
+                            console.log(`[twilio-webhook] Note Mode: ${from} is not a trainer. Falling through to conversational AI.`);
+                            // Fall through to normal processing for non-trainers
                         }
-                        // Return empty TwiML — no reply
-                        const twiml = `<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>`;
-                        return new Response(twiml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
                     }
                 }
             } catch (noteErr) {
