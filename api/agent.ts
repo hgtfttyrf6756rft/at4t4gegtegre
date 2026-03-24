@@ -414,6 +414,13 @@ export default {
                 if (mediaUrl) incomingMediaUrls.push(mediaUrl);
             }
 
+            // 4. Handle Twilio Error/Alert Webhooks (which contain ErrorCode instead of To/From)
+            const errCode = formData.get('ErrorCode')?.toString();
+            if (errCode) {
+                console.error(`[twilio-webhook] Received Error/Alert Webhook from Twilio: ${errCode} - ${formData.get('Msg')?.toString()}`);
+                return new Response('OK', { status: 200 });
+            }
+
             if (!to || (!bodyStr && numMedia === 0)) {
                 console.warn('[twilio-webhook] Missing To or Body/Media');
                 return new Response('Missing To or Body', { status: 400 });
