@@ -129,27 +129,29 @@ const leadCaptureTool = {
     ]
 };
 
-const provisionLeadAgentTool = {
+const provisionAgentTool = {
     functionDeclarations: [
         {
-            name: "provisionLeadAgent",
-            description: "Reserves a new phone number and configures it for Lead Capture using the gathered details.",
+            name: "provisionAgent",
+            description: "Reserves a new phone number and configures it as either a Lead Capture agent or an Informational Hotline.",
             parameters: {
                 type: Type.OBJECT,
                 properties: {
-                    companyName: { type: Type.STRING, description: "Company Name" },
-                    description: { type: Type.STRING, description: "Company Description" },
-                    website: { type: Type.STRING, description: "Website" },
-                    email: { type: Type.STRING, description: "Company Email" },
-                    productService: { type: Type.STRING, description: "Product or service provided" },
+                    agentType: { type: Type.STRING, description: "'leads' for a lead capture agent, or 'hotline' for an informational hotline" },
+                    label: { type: Type.STRING, description: "A friendly label or name for the hotline (hotline path only, optional)" },
+                    companyName: { type: Type.STRING, description: "Company Name (leads path)" },
+                    description: { type: Type.STRING, description: "Company Description (leads path)" },
+                    website: { type: Type.STRING, description: "Website (leads path, optional)" },
+                    email: { type: Type.STRING, description: "Company Email (leads path, optional)" },
+                    productService: { type: Type.STRING, description: "Product or service provided (leads path)" },
                     dataToCollect: {
                         type: Type.ARRAY,
                         items: { type: Type.STRING },
-                        description: "List of fields to collect from callers (e.g. ['Name', 'Phone Number'])"
+                        description: "List of fields to collect from callers e.g. ['Name', 'Phone Number'] (leads path)"
                     },
-                    leadDestination: { type: Type.STRING, description: "Route destination: 'email', 'sms', or 'app'" }
+                    leadDestination: { type: Type.STRING, description: "Route for leads: 'email', 'sms', or 'app' (leads path)" }
                 },
-                required: ["companyName", "description", "productService", "dataToCollect", "leadDestination"]
+                required: ["agentType"]
             }
         }
     ]
@@ -899,22 +901,33 @@ wssSetup.on('connection', (wsSetup: WebSocket) => {
 
                 console.log(`[WS-Setup] Setup for call: ${callSid} (To: ${to}, From: ${callerNumber})`);
 
-                const systemPrompt = `You are the Freshfront Agent Setup Assistant. You are talking to a user on the phone who wants to create a personalized AI Phone Agent to capture leads for their business.
-Your goal is to politely collect the following details:
+                const systemPrompt = `You are the Freshfront Agent Setup Assistant. You are talking to a new user on the phone. Start by warmly welcoming them and asking which type of phone agent they want:
+
+Option 1 — LEAD CAPTURE AGENT: An AI phone agent for their business that answers calls and collects caller information (name, phone number, inquiry, etc.) and forwards leads to the business owner.
+
+Option 2 — INFORMATIONAL HOTLINE: A personal AI hotline that answers questions based on notes the owner sends to it via text message. Great for information lines, FAQs, or personal knowledge bases. No business account required.
+
+Based on their choice, collect the required details:
+
+For LEAD CAPTURE (agentType='leads'):
 1. Company Name
 2. Company Description
-3. Website (if they have one)
-4. Company Email Address
+3. Website (optional, ask once)
+4. Company Email (optional, ask once)
 5. The product or service they provide
-6. What specific data they want to collect from callers (e.g. Name, Phone Number, Inquiry Details).
-7. Where they want the collected leads sent: 'email', 'sms', or 'app'. If they say app or dashboard, it's 'app'.
+6. What data to collect from callers (e.g. Name, Phone Number, Inquiry)
+7. Where to send leads: email, sms, or app (say 'dashboard' maps to app)
+
+For INFORMATIONAL HOTLINE (agentType='hotline'):
+1. A friendly label or name for their hotline (optional — if they don't have one, use their business or personal name, or just say 'Your Hotline')
+That's it! Tell them their new number will be set up and they can start texting notes to it right away and call it to ask questions anytime.
 
 CRITICAL INSTRUCTIONS:
-- You are communicating via a voice call. Keep your responses conversational, friendly, and concise. Avoid long monologues.
-- If a name, email address, or website sounds ambiguous or unusual, explicitly ask the user to spell it out for you to ensure accuracy.
-- Once you have collected ALL the required information, you MUST call the 'provisionLeadAgent' tool to reserve their phone number and configure their account.
-- Do not make up information. Use only what the user provides.
-- Never use markdown syntax (like *, **, #) in your responses, as it will be spoken aloud.`;
+- You are on a phone call. Be conversational, concise, and friendly. No markdown.
+- Ask one or two questions at a time — do not dump all questions at once.
+- Once all required details are gathered, call 'provisionAgent' with agentType set correctly.
+- If the caller sounds unsure, briefly explain the difference again.
+- Never use asterisks, bullet points, or emojis in your speech.`;
 
                 sessions[callSid!] = {
                     contents: [],
@@ -936,7 +949,7 @@ CRITICAL INSTRUCTIONS:
                         contents: session.contents,
                         config: {
                             systemInstruction: session.systemPrompt,
-                            tools: [provisionLeadAgentTool]
+                            tools: [provisionAgentTool]
                         }
                     });
 
@@ -954,67 +967,77 @@ CRITICAL INSTRUCTIONS:
 
                         if (part.functionCall) {
                             const call = part.functionCall;
-                            if (call.name === 'provisionLeadAgent') {
-                                console.log(`[WS-Setup] Provisioning Agent for ${callerNumber}:`, call.args);
-                                
+                            if (call.name === 'provisionAgent') {
+                                const args = call.args as any;
+                                console.log(`[WS-Setup] Provisioning Agent for ${callerNumber}: type=${args.agentType}`, args);
+
+                                // Announce we're working on it
+                                wsSetup.send(JSON.stringify({
+                                    type: 'text',
+                                    token: args.agentType === 'hotline'
+                                        ? "Perfect! I'm reserving your informational hotline number now. Just a moment!"
+                                        : "I'm setting up your lead capture agent now. This will take just a moment while I reserve your new phone number.",
+                                    last: false
+                                }));
+
                                 try {
-                                    wsSetup.send(JSON.stringify({
-                                        type: 'text',
-                                        token: "I'm setting up your agent now. This will take just a moment while I reserve your new phone number.",
-                                        last: false
-                                    }));
+                                    const newTwilioNumber = await phoneAgentService.buyTwilioNumber(
+                                        null,
+                                        DOMAIN ? `https://${DOMAIN}` : `http://localhost:${PORT}`,
+                                        DOMAIN ? `https://${DOMAIN}/twiml` : `http://localhost:${PORT}/twiml`
+                                    );
+                                    console.log(`[WS-Setup] New Number: ${newTwilioNumber}`);
 
                                     const firestore = initFirebase();
-                                    
-                                    let uid = 'placeholder_user';
+                                    let userRef: FirebaseFirestore.DocumentReference | null = null;
+                                    let uid = '';
                                     let userData: any = {};
-                                    let userRef: any = null;
 
                                     if (firestore) {
-                                        const normalizedTarget = normalizePhoneNumber(callerNumber);
-                                        const noPlusTarget = normalizedTarget.startsWith('+') ? normalizedTarget.substring(1) : normalizedTarget;
-                                        
-                                        const searchValues = [callerNumber, normalizedTarget, noPlusTarget, `+${noPlusTarget}`];
+                                        const normalizedCaller = normalizePhoneNumber(callerNumber);
+                                        const noPlusCaller = normalizedCaller.startsWith('+') ? normalizedCaller.substring(1) : normalizedCaller;
+                                        const searchValues = [callerNumber, normalizedCaller, noPlusCaller, `+${noPlusCaller}`];
                                         const uniqueValues = [...new Set(searchValues)].slice(0, 5);
-                                        
+
                                         let userSnap = await firestore.collection('users')
                                             .where('personalPhoneNumber', 'in', uniqueValues)
                                             .limit(1).get();
-                                            
+
                                         if (!userSnap.empty) {
                                             userRef = userSnap.docs[0].ref;
-                                            userData = userSnap.docs[0].data();
                                             uid = userSnap.docs[0].id;
-                                            console.log(`[WS-Setup] Found matching user ${uid} by personalPhoneNumber.`);
-                                        } else {
-                                            console.log(`[WS-Setup] No matching user found for ${callerNumber}. Working anonymously.`);
+                                            userData = userSnap.docs[0].data();
+                                            console.log(`[WS-Setup] Matched caller to user ${uid}`);
                                         }
                                     }
 
-                                    const appUrl = DOMAIN ? `https://${DOMAIN}` : (process.env.APP_URL || 'http://localhost');
-                                    const voiceUrl = DOMAIN ? `https://${DOMAIN}/twiml` : `${appUrl}/twiml`;
-                                    
-                                    const areaCodeContext = callerNumber.startsWith('+1') ? callerNumber.substring(2, 5) : '415';
-                                    
-                                    const newTwilioNumber = await phoneAgentService.buyTwilioNumber(areaCodeContext, appUrl, voiceUrl);
-                                    console.log(`[WS-Setup] Successfully bought number: ${newTwilioNumber}`);
+                                    let newConfig: any;
 
-                                    const args = call.args as any;
-                                    
-                                    const leadFields = (args.dataToCollect || []).map((fieldName: string) => ({
-                                        id: Math.random().toString(36).substr(2, 9),
-                                        name: fieldName,
-                                        required: true
-                                    }));
-                                    
-                                    const newConfig = {
-                                        enabled: true,
-                                        mode: 'leads',
-                                        systemPrompt: `You are the lead capture phone agent for ${args.companyName}. ${args.description}. You offer: ${args.productService}. Website: ${args.website || 'N/A'}. Email: ${args.email || 'N/A'}. Be helpful, extremely brief, and professional.`,
-                                        leadCaptureEnabled: true,
-                                        leadFields: leadFields,
-                                        leadDestination: args.leadDestination || 'app',
-                                    };
+                                    if (args.agentType === 'hotline') {
+                                        // ─── HOTLINE PATH ───
+                                        newConfig = {
+                                            enabled: true,
+                                            mode: 'notes',
+                                            welcomeGreeting: `Hello! Ask me anything — I'll answer based on the notes I've been given.`,
+                                            label: args.label || 'My Hotline',
+                                            ownerPhone: callerNumber
+                                        };
+                                    } else {
+                                        // ─── LEADS PATH ───
+                                        const leadFields = (args.dataToCollect || []).map((fieldName: string) => ({
+                                            id: Math.random().toString(36).substr(2, 9),
+                                            name: fieldName,
+                                            required: true
+                                        }));
+                                        newConfig = {
+                                            enabled: true,
+                                            mode: 'leads',
+                                            systemPrompt: `You are the lead capture phone agent for ${args.companyName}. ${args.description}. You offer: ${args.productService}. Website: ${args.website || 'N/A'}. Email: ${args.email || 'N/A'}. Be helpful, extremely brief, and professional.`,
+                                            leadCaptureEnabled: true,
+                                            leadFields: leadFields,
+                                            leadDestination: args.leadDestination || 'app',
+                                        };
+                                    }
 
                                     if (userRef) {
                                         const newList = [...(userData.agentPhoneNumbersList || [])];
@@ -1041,7 +1064,7 @@ CRITICAL INSTRUCTIONS:
                                         role: 'user',
                                         parts: [{
                                             functionResponse: {
-                                                name: 'provisionLeadAgent',
+                                                name: 'provisionAgent',
                                                 response: { 
                                                     success: true, 
                                                     newNumber: newTwilioNumber,
@@ -1056,7 +1079,7 @@ CRITICAL INSTRUCTIONS:
                                         contents: session.contents,
                                         config: {
                                             systemInstruction: session.systemPrompt,
-                                            tools: [provisionLeadAgentTool]
+                                            tools: [provisionAgentTool]
                                         }
                                     });
 
@@ -1073,7 +1096,7 @@ CRITICAL INSTRUCTIONS:
                                         role: 'user',
                                         parts: [{
                                             functionResponse: {
-                                                name: 'provisionLeadAgent',
+                                                name: 'provisionAgent',
                                                 response: { success: false, error: provErr.message || "Failed to provision number." }
                                             }
                                         }]
