@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { storageService } from '../services/storageService';
-import { UserProfile, ResearchProject } from '../types';
+import { UserProfile, ResearchProject, PhoneAgentConfig } from '../types';
 import { auth } from '../services/firebase';
 import { authFetch } from '../services/authFetch';
 import { deductCredits, hasEnoughCredits, getUserCredits } from '../services/creditService';
@@ -32,6 +32,9 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
     const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // Multi-Number State
+    const [activePhoneTab, setActivePhoneTab] = useState<string | null>(null);
+
     // Provisioning Modal State
     const [showProvisionModal, setShowProvisionModal] = useState(false);
     const [searchAreaCode, setSearchAreaCode] = useState('');
@@ -48,6 +51,11 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
     const [capturedNotes, setCapturedNotes] = useState<any[]>([]);
     const [fetchingNotes, setFetchingNotes] = useState(false);
 
+    // Verify Phone State
+    const [verifyPhoneInput, setVerifyPhoneInput] = useState('');
+    const [verifyCodeInput, setVerifyCodeInput] = useState('');
+    const [verifyStatus, setVerifyStatus] = useState<'idle' | 'sending' | 'pending_code' | 'verifying'>('idle');
+
     const { subscription, showUpgradeModal, openUpgradeModal, closeUpgradeModal } = useSubscription();
     const isPro = subscription.subscribed || subscription.subscriptionTier === 'pro' || subscription.subscriptionTier === 'unlimited';
 
@@ -58,6 +66,20 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                 setLoading(true);
                 const data = await storageService.getUserProfile();
                 if (data) {
+                    // Migrate legacy single number to multi-number array
+                    if (data.agentPhoneNumber && (!data.agentPhoneNumbersList || data.agentPhoneNumbersList.length === 0)) {
+                        data.agentPhoneNumbersList = [data.agentPhoneNumber];
+                        data.agentPhoneConfigs = data.agentPhoneConfigs || {};
+                        if (data.agentPhoneConfig && !data.agentPhoneConfigs[data.agentPhoneNumber]) {
+                            let mode = data.agentPhoneConfig.mode as string || 'projects';
+                            if (mode === 'personal') mode = data.agentPhoneConfig.leadCaptureEnabled ? 'leads' : 'projects';
+                            if (mode === 'note') mode = 'notes';
+                            data.agentPhoneConfigs[data.agentPhoneNumber] = { ...data.agentPhoneConfig, mode: mode as any };
+                        }
+                    }
+                    if (data.agentPhoneNumbersList && data.agentPhoneNumbersList.length > 0) {
+                        setActivePhoneTab(data.agentPhoneNumbersList[0]);
+                    }
                     setProfile(data);
                 } else if (auth.currentUser) {
                     // Fallback to auth defaults if no profile doc exists
@@ -131,6 +153,71 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
         if (typeof window === 'undefined') return;
         window.history.pushState({}, '', '/ddi');
         window.dispatchEvent(new PopStateEvent('popstate'));
+    };
+
+    const handleSendVerification = async () => {
+        if (!verifyPhoneInput) return;
+        setVerifyStatus('sending');
+        try {
+            const token = await auth.currentUser?.getIdToken();
+            const res = await fetch('/api/verify?op=send', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ phoneNumber: verifyPhoneInput })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setVerifyStatus('pending_code');
+            } else {
+                alert(data.error || 'Failed to send verification code');
+                setVerifyStatus('idle');
+            }
+        } catch (e) {
+            alert('Failed to send verification code');
+            setVerifyStatus('idle');
+        }
+    };
+
+    const handleCheckVerification = async () => {
+        if (!verifyCodeInput) return;
+        setVerifyStatus('verifying');
+        try {
+            const token = await auth.currentUser?.getIdToken();
+            const res = await fetch('/api/verify?op=check', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ phoneNumber: verifyPhoneInput, code: verifyCodeInput })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setProfile(prev => ({ ...prev, personalPhoneNumber: verifyPhoneInput }));
+                setVerifyStatus('idle');
+                if (data.claimedCount > 0) {
+                    alert(`Successfully verified! Claimed ${data.claimedCount} phone agent(s).`);
+                    const p = await storageService.getUserProfile();
+                    if (p) {
+                        setProfile(p);
+                        if (!activePhoneTab && p.agentPhoneNumbersList?.length) {
+                             setActivePhoneTab(p.agentPhoneNumbersList[0]);
+                        }
+                    }
+                } else {
+                    alert('Phone number verified successfully.');
+                }
+            } else {
+                alert(data.error || 'Invalid verification code');
+                setVerifyStatus('pending_code');
+            }
+        } catch (e) {
+            alert('Failed to verify code');
+            setVerifyStatus('pending_code');
+        }
     };
 
     const handleSave = async () => {
@@ -241,11 +328,20 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                 // Deduct credits on success
                 await deductCredits('phoneProvisioning');
 
-                setProfile(prev => ({
-                    ...prev,
-                    agentPhoneNumber: data.phoneNumber,
-                    agentPhoneConfig: { ...(prev.agentPhoneConfig || {}), enabled: true }
-                }));
+                setProfile(prev => {
+                    const newList = [...(prev.agentPhoneNumbersList || [])];
+                    if (!newList.includes(data.phoneNumber)) newList.push(data.phoneNumber);
+                    return {
+                        ...prev,
+                        agentPhoneNumber: data.phoneNumber,
+                        agentPhoneNumbersList: newList,
+                        agentPhoneConfigs: {
+                            ...(prev.agentPhoneConfigs || {}),
+                            [data.phoneNumber]: { enabled: true, mode: 'projects' }
+                        }
+                    };
+                });
+                setActivePhoneTab(data.phoneNumber);
                 setMessage({ type: 'success', text: `Successfully provisioned ${data.phoneNumber}!` });
                 setShowProvisionModal(false);
                 setTimeout(() => setMessage(null), 5000);
@@ -260,37 +356,53 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
         }
     };
 
+    const updateActivePhoneConfig = (updates: Partial<PhoneAgentConfig>) => {
+        if (!activePhoneTab) return;
+        setProfile(prev => {
+            const configs = { ...(prev.agentPhoneConfigs || {}) };
+            const current = configs[activePhoneTab] || { enabled: true, mode: 'projects' };
+            configs[activePhoneTab] = { ...current, ...updates };
+            return { ...prev, agentPhoneConfigs: configs };
+        });
+    };
+
     const addLeadField = () => {
-        setProfile(prev => ({
-            ...prev,
-            agentPhoneConfig: {
-                ...(prev.agentPhoneConfig || { enabled: true }),
-                leadFields: [
-                    ...(prev.agentPhoneConfig?.leadFields || []),
-                    { id: crypto.randomUUID(), name: '', required: false }
-                ]
-            }
-        }));
+        if (!activePhoneTab) return;
+        setProfile(prev => {
+            const configs = { ...(prev.agentPhoneConfigs || {}) };
+            const current = configs[activePhoneTab] || { enabled: true };
+            configs[activePhoneTab] = {
+                ...current,
+                leadFields: [...(current.leadFields || []), { id: crypto.randomUUID(), name: '', required: false }]
+            };
+            return { ...prev, agentPhoneConfigs: configs };
+        });
     };
 
     const removeLeadField = (id: string) => {
-        setProfile(prev => ({
-            ...prev,
-            agentPhoneConfig: {
-                ...(prev.agentPhoneConfig || { enabled: true }),
-                leadFields: (prev.agentPhoneConfig?.leadFields || []).filter(f => f.id !== id)
-            }
-        }));
+        if (!activePhoneTab) return;
+        setProfile(prev => {
+            const configs = { ...(prev.agentPhoneConfigs || {}) };
+            const current = configs[activePhoneTab] || { enabled: true };
+            configs[activePhoneTab] = {
+                ...current,
+                leadFields: (current.leadFields || []).filter(f => f.id !== id)
+            };
+            return { ...prev, agentPhoneConfigs: configs };
+        });
     };
 
     const updateLeadField = (id: string, updates: any) => {
-        setProfile(prev => ({
-            ...prev,
-            agentPhoneConfig: {
-                ...(prev.agentPhoneConfig || { enabled: true }),
-                leadFields: (prev.agentPhoneConfig?.leadFields || []).map(f => f.id === id ? { ...f, ...updates } : f)
-            }
-        }));
+        if (!activePhoneTab) return;
+        setProfile(prev => {
+            const configs = { ...(prev.agentPhoneConfigs || {}) };
+            const current = configs[activePhoneTab] || { enabled: true };
+            configs[activePhoneTab] = {
+                ...current,
+                leadFields: (current.leadFields || []).map(f => f.id === id ? { ...f, ...updates } : f)
+            };
+            return { ...prev, agentPhoneConfigs: configs };
+        });
     };
 
     const handleDeleteLead = async (id: string) => {
@@ -330,6 +442,11 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
             ? 'bg-[#2c2c2e] hover:bg-[#3a3a3c] text-white border border-[#3a3a3c]'
             : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300',
     };
+
+    const activeConfig = activePhoneTab ? profile.agentPhoneConfigs?.[activePhoneTab] : null;
+
+    const hasNotesMode = Object.values(profile.agentPhoneConfigs || {}).some(c => c.mode === 'notes' || c.mode as any === 'note');
+    const hasLeadsMode = Object.values(profile.agentPhoneConfigs || {}).some(c => c.mode === 'leads' || c.leadCaptureEnabled);
 
     return (
         <div className={`min-h-screen h-screen overflow-y-auto ${ui.page} font-sans selection:bg-blue-500/30`}>
@@ -466,216 +583,250 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                     <h3 className={`text-lg font-semibold ${ui.heading}`}>Phone Agent</h3>
                                     <p className={`text-sm ${ui.subtext} mt-1`}>Configure your personal AI assistant via SMS/Voice.</p>
                                 </div>
+                                <button
+                                    onClick={() => setShowProvisionModal(true)}
+                                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors whitespace-nowrap ${ui.buttonSecondary}`}
+                                >
+                                    + Get New Number
+                                </button>
                             </div>
-                            <div className={`space-y-4 ${!isPro ? 'opacity-40 pointer-events-none' : ''}`}>
-                                <div>
-                                    <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Assigned Twilio Number</label>
-                                    <div className="flex items-center gap-3">
-                                        <input
-                                            type="text"
-                                            value={profile.agentPhoneNumber || ''}
-                                            onChange={e => setProfile(prev => ({ ...prev, agentPhoneNumber: e.target.value }))}
-                                            placeholder="+1 (555) 555-5555"
-                                            className={`flex-1 px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`}
-                                        />
+
+                            <div className={`space-y-6 ${!isPro ? 'opacity-40 pointer-events-none' : ''}`}>
+                                {(!profile.agentPhoneNumbersList || profile.agentPhoneNumbersList.length === 0) ? (
+                                    <div className={`text-center py-12 rounded-2xl border-2 border-dashed ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-200'}`}>
+                                        <div className={`text-base font-medium ${ui.heading} mb-2`}>No Phone Numbers Active</div>
+                                        <p className={`text-sm ${ui.subtext} mb-4`}>Provision a Twilio phone number to start building your voice/SMS agent.</p>
                                         <button
                                             onClick={() => setShowProvisionModal(true)}
-                                            className={`px-4 py-3 rounded-xl font-medium transition-colors whitespace-nowrap ${ui.buttonSecondary}`}
+                                            className={`px-5 py-2.5 rounded-full font-medium transition-all ${ui.buttonPrimary}`}
                                         >
-                                            Get New Number
+                                            Get Your First Number
                                         </button>
                                     </div>
-                                    <p className={`mt-2 text-xs ${ui.subtext}`}>Enter the Twilio phone number acting as your agent, or provision a new one.</p>
-                                </div>
-                                <div className="pt-2">
-                                    <label className={`flex items-center gap-3 cursor-pointer`}>
-                                        <div className="relative">
-                                            <input
-                                                type="checkbox"
-                                                className="sr-only peer"
-                                                checked={profile.agentPhoneConfig?.enabled ?? false}
-                                                onChange={e => setProfile(prev => ({
-                                                    ...prev,
-                                                    agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: false }), enabled: e.target.checked }
-                                                }))}
-                                            />
-                                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                                        </div>
-                                        <span className={`text-sm font-medium ${ui.label}`}>Enable Phone Agent</span>
-                                    </label>
-                                </div>
-                                {profile.agentPhoneConfig?.enabled && (
+                                ) : (
                                     <>
-                                        <div className="pt-2">
-                                            <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Agent Mode</label>
-                                            <div className="flex bg-[#2c2c2e]/50 p-1 rounded-xl border border-[#3a3a3c] space-x-1">
+                                        {/* Phone Number Tabs */}
+                                        <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
+                                            {profile.agentPhoneNumbersList.map(num => (
                                                 <button
-                                                    onClick={() => setProfile(prev => ({
-                                                        ...prev,
-                                                        agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), mode: 'personal' }
-                                                    }))}
-                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${(profile.agentPhoneConfig?.mode === 'personal' || !profile.agentPhoneConfig?.mode) ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                    key={num}
+                                                    onClick={() => setActivePhoneTab(num)}
+                                                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-all whitespace-nowrap border ${activePhoneTab === num ? 'bg-blue-600 border-blue-600 text-white shadow-md' : isDarkMode ? 'bg-[#2c2c2e] border-[#3a3a3c] text-[#86868b] hover:border-gray-500' : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'}`}
                                                 >
-                                                    Personal / Client
+                                                    {num}
                                                 </button>
-                                                <button
-                                                    onClick={() => setProfile(prev => ({
-                                                        ...prev,
-                                                        agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), mode: 'note' }
-                                                    }))}
-                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${profile.agentPhoneConfig?.mode === 'note' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
-                                                >
-                                                    Note Mode
-                                                </button>
-                                            </div>
-                                            <p className={`mt-2 text-[10px] ${ui.subtext}`}>
-                                                {profile.agentPhoneConfig?.mode === 'note' 
-                                                    ? "Text notes to this number. Call the number to talk to an AI that strictly answers based on your notes."
-                                                    : "Acts as a general assistant that can be customized with persona instructions and capture lead info."}
-                                            </p>
+                                            ))}
                                         </div>
 
-                                        <div className="pt-2">
-                                            <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Welcome Greeting (Spoken by Twilio)</label>
-                                            <textarea
-                                                rows={2}
-                                                value={profile.agentPhoneConfig?.welcomeGreeting || ''}
-                                                onChange={e => setProfile(prev => ({
-                                                    ...prev,
-                                                    agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), welcomeGreeting: e.target.value }
-                                                }))}
-                                                placeholder={profile.agentPhoneConfig?.mode === 'note' ? "e.g. Note agent is active. What would you like to know?" : "e.g. Hello! Welcome to my AI assistant. How can I help you today?"}
-                                                className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all resize-none ${ui.input}`}
-                                            />
-                                            <p className={`mt-2 text-[10px] ${ui.subtext}`}>This is played immediately by Twilio before the AI starts processing speech.</p>
-                                        </div>
-
-                                        {profile.agentPhoneConfig?.mode === 'note' && (
-                                            <div className="pt-2">
-                                                <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Trainer Numbers (Comma separated)</label>
-                                                <input
-                                                    type="text"
-                                                    value={profile.agentPhoneConfig?.trainerNumbers || ''}
-                                                    onChange={e => setProfile(prev => ({
-                                                        ...prev,
-                                                        agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), trainerNumbers: e.target.value }
-                                                    }))}
-                                                    placeholder="e.g. +1234567890, +1987654321"
-                                                    className={`w-full px-4 py-2.5 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`}
-                                                />
-                                                <p className={`mt-2 text-[10px] ${ui.subtext}`}>Only these trusted numbers can save notes via SMS. Others will receive normal AI replies based on the notes.</p>
-                                            </div>
-                                        )}
-
-                                        <div className="pt-2">
-                                            <div className="flex items-center justify-between mb-2">
-                                                <label className={`text-sm font-semibold ${ui.label}`}>Agent Voice</label>
-                                                <div className="flex bg-[#2c2c2e]/50 p-1 rounded-xl border border-[#3a3a3c]">
-                                                    <button
-                                                        onClick={() => setProfile(prev => ({
-                                                            ...prev,
-                                                            agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), voiceGender: 'female', voiceName: 'Kore' }
-                                                        }))}
-                                                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${profile.agentPhoneConfig?.voiceGender === 'female' || !profile.agentPhoneConfig?.voiceGender ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
-                                                    >
-                                                        Female
-                                                    </button>
-                                                    <button
-                                                        onClick={() => setProfile(prev => ({
-                                                            ...prev,
-                                                            agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), voiceGender: 'male', voiceName: 'Fenrir' }
-                                                        }))}
-                                                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${profile.agentPhoneConfig?.voiceGender === 'male' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
-                                                    >
-                                                        Male
-                                                    </button>
-                                                </div>
-                                            </div>
-                                            <select
-                                                value={profile.agentPhoneConfig?.voiceName || ''}
-                                                onChange={e => setProfile(prev => ({
-                                                    ...prev,
-                                                    agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), voiceName: e.target.value }
-                                                }))}
-                                                className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`}
-                                            >
-                                                <option value="">Select a voice...</option>
-                                                {(profile.agentPhoneConfig?.voiceGender === 'male' ? GEMINI_MALE_VOICES : GEMINI_FEMALE_VOICES).map(v => (
-                                                    <option key={v} value={v}>{v}</option>
-                                                ))}
-                                            </select>
-                                            <p className={`mt-2 text-[10px] ${ui.subtext}`}>Choose the persona and tone for your phone agent.</p>
-                                        </div>
-
-                                        <div className="pt-2">
-                                            <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Custom System Prompt / Persona</label>
-                                            <textarea
-                                                rows={2}
-                                                value={profile.agentPhoneConfig?.systemPrompt || ''}
-                                                onChange={e => setProfile(prev => ({
-                                                    ...prev,
-                                                    agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), systemPrompt: e.target.value }
-                                                }))}
-                                                placeholder="Optional instructions for how the agent should behave over SMS (e.g., 'Be extremely concise', 'Always act professionally')."
-                                                className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all resize-none ${ui.input}`}
-                                            />
-                                        </div>
-
-                                        {/* Lead Capture Settings */}
-                                        {profile.agentPhoneConfig?.mode !== 'note' && (
-                                            <div className="pt-4 border-t border-[#3a3a3c]/30 mt-4">
-                                                <div className="flex items-center justify-between mb-4">
-                                                    <h4 className={`text-sm font-semibold ${ui.label}`}>Lead Capture Settings</h4>
-                                                    <label className="relative inline-flex items-center cursor-pointer">
-                                                        <input
-                                                            type="checkbox"
-                                                            className="sr-only peer"
-                                                            checked={profile.agentPhoneConfig?.leadCaptureEnabled}
-                                                            onChange={e => setProfile(prev => ({
-                                                                ...prev,
-                                                                agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), leadCaptureEnabled: e.target.checked }
-                                                            }))}
-                                                        />
-                                                        <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                                                        <span className={`ml-3 text-xs font-medium ${ui.label}`}>Enabled</span>
+                                        {/* Active Number Configuration */}
+                                        {activePhoneTab && activeConfig && (
+                                            <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-[#1c1c1e]/50 border-[#3a3a3c]' : 'bg-gray-50/50 border-gray-200'} space-y-5 animate-fade-in`}>
+                                                
+                                                <div className="flex items-center justify-between border-b pb-4 border-[#3a3a3c]/30">
+                                                    <div>
+                                                        <h4 className={`font-semibold ${ui.heading}`}>{activePhoneTab} Config</h4>
+                                                        <p className={`text-xs ${ui.subtext}`}>Manage the specific role and persona for this number</p>
+                                                    </div>
+                                                    <label className={`flex items-center gap-3 cursor-pointer`}>
+                                                        <div className="relative">
+                                                            <input
+                                                                type="checkbox"
+                                                                className="sr-only peer"
+                                                                checked={activeConfig.enabled ?? false}
+                                                                onChange={e => updateActivePhoneConfig({ enabled: e.target.checked })}
+                                                            />
+                                                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                                        </div>
+                                                        <span className={`text-sm font-medium ${ui.label}`}>Enabled</span>
                                                     </label>
                                                 </div>
 
-                                                {profile.agentPhoneConfig?.leadCaptureEnabled && (
-                                                    <div className="space-y-3">
-                                                        <p className={`text-xs ${ui.subtext} mb-2`}>Specify fields for the AI agent to collect during the conversation.</p>
-                                                        {(profile.agentPhoneConfig?.leadFields || []).map((field, idx) => (
-                                                            <div key={field.id} className="flex items-center gap-2 group">
-                                                                <input
-                                                                    type="text"
-                                                                    value={field.name}
-                                                                    onChange={e => updateLeadField(field.id, { name: e.target.value })}
-                                                                    placeholder="Field Name"
-                                                                    className={`flex-1 px-3 py-1.5 text-sm rounded-lg border focus:outline-none ${ui.input}`}
-                                                                />
-                                                                <label className="flex items-center gap-1.5 cursor-pointer">
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        checked={field.required}
-                                                                        onChange={e => updateLeadField(field.id, { required: e.target.checked })}
-                                                                        className="rounded border-gray-400 text-blue-600 focus:ring-blue-500"
-                                                                    />
-                                                                    <span className={`text-[10px] font-medium uppercase tracking-wider ${ui.label}`}>Req</span>
-                                                                </label>
+                                                {activeConfig.enabled && (
+                                                    <div className="space-y-4">
+                                                        <div>
+                                                            <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Agent Mode</label>
+                                                            <div className="flex bg-[#2c2c2e]/50 p-1 rounded-xl border border-[#3a3a3c] space-x-1">
                                                                 <button
-                                                                    onClick={() => removeLeadField(field.id)}
-                                                                    className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 opacity-40 hover:opacity-100 transition-all"
+                                                                    onClick={() => updateActivePhoneConfig({ mode: 'projects' })}
+                                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeConfig.mode === 'projects' || !activeConfig.mode ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
                                                                 >
-                                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                                    Projects
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => updateActivePhoneConfig({ mode: 'notes' })}
+                                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeConfig.mode === 'notes' || activeConfig.mode === 'note' as any ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                >
+                                                                    Notes
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => updateActivePhoneConfig({ mode: 'leads' })}
+                                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeConfig.mode === 'leads' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                >
+                                                                    Leads
                                                                 </button>
                                                             </div>
-                                                        ))}
-                                                        <button
-                                                            onClick={addLeadField}
-                                                            className={`w-full mt-2 py-2 border-2 border-dashed rounded-xl text-xs font-medium transition-all ${isDarkMode ? 'border-[#3a3a3c] hover:border-blue-500/50 text-[#86868b] hover:text-blue-400' : 'border-gray-200 hover:border-blue-500/50 text-gray-500 hover:text-blue-600'}`}
-                                                        >
-                                                            + Add Field
-                                                        </button>
+                                                            <p className={`mt-2 text-[10px] ${ui.subtext}`}>
+                                                                {activeConfig.mode === 'notes' || activeConfig.mode === 'note' as any
+                                                                    ? "Note Mode: Text notes to this number silently. Calling it triggers voice RAG over those notes."
+                                                                    : activeConfig.mode === 'leads'
+                                                                    ? "Lead Mode: Force the agent to follow a strict script to capture required caller info."
+                                                                    : "Project Mode: Acts as a standard assistant drawing context from your projects."}
+                                                            </p>
+                                                        </div>
+
+                                                        <div>
+                                                            <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Welcome Greeting (Spoken by Twilio)</label>
+                                                            <textarea
+                                                                rows={2}
+                                                                value={activeConfig.welcomeGreeting || ''}
+                                                                onChange={e => updateActivePhoneConfig({ welcomeGreeting: e.target.value })}
+                                                                placeholder={activeConfig.mode === 'notes' ? "e.g. Note agent is active. What would you like to know?" : "e.g. Hello! Welcome. How can I help you today?"}
+                                                                className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all resize-none ${ui.input}`}
+                                                            />
+                                                        </div>
+
+                                                        {(activeConfig.mode === 'notes' || activeConfig.mode === 'note' as any) && (
+                                                            <div>
+                                                                <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Trainer Numbers (Comma separated)</label>
+                                                                <input
+                                                                    type="text"
+                                                                    value={activeConfig.trainerNumbers || ''}
+                                                                    onChange={e => updateActivePhoneConfig({ trainerNumbers: e.target.value })}
+                                                                    placeholder="e.g. +1234567890, +1987654321"
+                                                                    className={`w-full px-4 py-2.5 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`}
+                                                                />
+                                                                <p className={`mt-2 text-[10px] ${ui.subtext}`}>Only these trusted numbers can save notes via SMS. Others will receive normal AI replies based on the notes.</p>
+                                                            </div>
+                                                        )}
+
+                                                        <div>
+                                                            <div className="flex items-center justify-between mb-2">
+                                                                <label className={`text-sm font-semibold ${ui.label}`}>Agent Voice</label>
+                                                                <div className="flex bg-[#2c2c2e]/50 p-1 rounded-xl border border-[#3a3a3c]">
+                                                                    <button
+                                                                        onClick={() => updateActivePhoneConfig({ voiceGender: 'female', voiceName: 'Kore' })}
+                                                                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${activeConfig.voiceGender === 'female' || !activeConfig.voiceGender ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                    >
+                                                                        Female
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => updateActivePhoneConfig({ voiceGender: 'male', voiceName: 'Fenrir' })}
+                                                                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${activeConfig.voiceGender === 'male' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                    >
+                                                                        Male
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                            <select
+                                                                value={activeConfig.voiceName || ''}
+                                                                onChange={e => updateActivePhoneConfig({ voiceName: e.target.value })}
+                                                                className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`}
+                                                            >
+                                                                <option value="">Select a voice...</option>
+                                                                {(activeConfig.voiceGender === 'male' ? GEMINI_MALE_VOICES : GEMINI_FEMALE_VOICES).map(v => (
+                                                                    <option key={v} value={v}>{v}</option>
+                                                                ))}
+                                                            </select>
+                                                        </div>
+
+                                                        <div>
+                                                            <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Custom System Prompt / Persona</label>
+                                                            <textarea
+                                                                rows={2}
+                                                                value={activeConfig.systemPrompt || ''}
+                                                                onChange={e => updateActivePhoneConfig({ systemPrompt: e.target.value })}
+                                                                placeholder="Optional instructions for how the agent should behave over SMS (e.g., 'Be extremely concise', 'Always act professionally')."
+                                                                className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all resize-none ${ui.input}`}
+                                                            />
+                                                        </div>
+
+                                                        {/* Lead Capture Settings */}
+                                                        {activeConfig.mode === 'leads' && (
+                                                            <div className="pt-4 border-t border-[#3a3a3c]/30 mt-4">
+                                                                <div className="flex items-center justify-between mb-4">
+                                                                    <h4 className={`text-sm font-semibold ${ui.label}`}>Lead Collection Setup</h4>
+                                                                </div>
+
+                                                                <div className="space-y-5">
+                                                                    {/* Lead Fields */}
+                                                                    <div>
+                                                                        <p className={`text-xs ${ui.subtext} mb-3`}>Specify fields for the AI agent to collect during the conversation.</p>
+                                                                    {(activeConfig.leadFields || []).map((field, idx) => (
+                                                                        <div key={field.id} className="flex items-center gap-2 group">
+                                                                            <input
+                                                                                type="text"
+                                                                                value={field.name}
+                                                                                onChange={e => updateLeadField(field.id, { name: e.target.value })}
+                                                                                placeholder="Field Name"
+                                                                                className={`flex-1 px-3 py-1.5 text-sm rounded-lg border focus:outline-none ${ui.input}`}
+                                                                            />
+                                                                            <label className="flex items-center gap-1.5 cursor-pointer">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    checked={field.required}
+                                                                                    onChange={e => updateLeadField(field.id, { required: e.target.checked })}
+                                                                                    className="rounded border-gray-400 text-blue-600 focus:ring-blue-500"
+                                                                                />
+                                                                                <span className={`text-[10px] font-medium uppercase tracking-wider ${ui.label}`}>Req</span>
+                                                                            </label>
+                                                                            <button
+                                                                                onClick={() => removeLeadField(field.id)}
+                                                                                className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 opacity-40 hover:opacity-100 transition-all"
+                                                                            >
+                                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                                            </button>
+                                                                        </div>
+                                                                    ))}
+                                                                    <button
+                                                                            onClick={addLeadField}
+                                                                            className={`w-full mt-2 py-2 border-2 border-dashed rounded-xl text-xs font-medium transition-all ${isDarkMode ? 'border-[#3a3a3c] hover:border-blue-500/50 text-[#86868b] hover:text-blue-400' : 'border-gray-200 hover:border-blue-500/50 text-gray-500 hover:text-blue-600'}`}
+                                                                        >
+                                                                            + Add Field
+                                                                        </button>
+                                                                    </div>
+
+                                                                    {/* Lead Destination */}
+                                                                    <div className="pt-2 border-t border-[#3a3a3c]/30">
+                                                                        <label className={`block text-xs font-semibold mb-2 mt-2 ${ui.label}`}>Lead Destination</label>
+                                                                        <div className="flex bg-[#2c2c2e]/50 p-1 rounded-xl border border-[#3a3a3c] space-x-1 mb-3">
+                                                                            <button
+                                                                                onClick={() => updateActivePhoneConfig({ leadDestination: 'app' })}
+                                                                                className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeConfig.leadDestination === 'app' || !activeConfig.leadDestination ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                            >
+                                                                                Dashboard
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => updateActivePhoneConfig({ leadDestination: 'email' })}
+                                                                                className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeConfig.leadDestination === 'email' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                            >
+                                                                                Email
+                                                                            </button>
+                                                                            <button
+                                                                                onClick={() => updateActivePhoneConfig({ leadDestination: 'sms' })}
+                                                                                className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeConfig.leadDestination === 'sms' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                            >
+                                                                                SMS
+                                                                            </button>
+                                                                        </div>
+                                                                        
+                                                                        {(activeConfig.leadDestination === 'email' || activeConfig.leadDestination === 'sms') && (
+                                                                            <div>
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={activeConfig.leadDestinationAddress || ''}
+                                                                                    onChange={e => updateActivePhoneConfig({ leadDestinationAddress: e.target.value })}
+                                                                                    placeholder={activeConfig.leadDestination === 'email' ? 'Enter email address' : 'Enter mobile number'}
+                                                                                    className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`}
+                                                                                />
+                                                                            </div>
+                                                                        )}
+                                                                        <p className={`mt-2 text-[10px] ${ui.subtext}`}>
+                                                                            {activeConfig.leadDestination === 'email' ? "Leads will be emailed to you immediately." : activeConfig.leadDestination === 'sms' ? "Leads will be texted to your phone immediately." : "Leads will be saved and visible below in 'Captured Leads'."}
+                                                                        </p>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
@@ -725,124 +876,184 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                             )}
                         </div>
 
-                        {/* Captured Leads / Note Mode Section */}
-                        {profile.agentPhoneConfig?.enabled && profile.agentPhoneConfig?.mode === 'note' ? (
-                            <div className={`rounded-3xl p-6 sm:p-8 ${ui.card}`}>
-                                <div className="flex items-center justify-between mb-6">
-                                    <div>
-                                        <h3 className={`text-lg font-semibold ${ui.heading}`}>My Notes</h3>
-                                        <p className={`text-xs ${ui.subtext} mt-1`}>Text your agent number to save notes silently</p>
+                        {/* Captured Leads / Notes Sections */}
+                        <div className="space-y-6">
+                            {(hasNotesMode || capturedNotes.length > 0) && (
+                                <div className={`rounded-3xl p-6 sm:p-8 ${ui.card}`}>
+                                    <div className="flex items-center justify-between mb-6">
+                                        <div>
+                                            <h3 className={`text-lg font-semibold ${ui.heading}`}>My Notes</h3>
+                                            <p className={`text-xs ${ui.subtext} mt-1`}>Your saved notes from any Note Agent numbers</p>
+                                        </div>
+                                        <div className={`px-3 py-1 rounded-full text-xs font-semibold ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                                            {capturedNotes.length} total
+                                        </div>
                                     </div>
-                                    <div className={`px-3 py-1 rounded-full text-xs font-semibold ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
-                                        {capturedNotes.length} total
-                                    </div>
-                                </div>
 
-                                {fetchingNotes ? (
-                                    <div className="flex justify-center py-10">
-                                        <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
-                                    </div>
-                                ) : capturedNotes.length === 0 ? (
-                                    <div className={`text-center py-12 rounded-2xl border-2 border-dashed ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-100'}`}>
-                                        <div className={`text-sm ${ui.subtext}`}>No notes saved yet</div>
-                                        <p className={`text-[10px] ${ui.subtext} mt-1`}>Send an SMS to {profile.agentPhoneNumber || 'your agent number'} to create your first note.</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                                        {capturedNotes.map((note) => (
-                                            <div key={note.id} className={`rounded-2xl p-4 border ${isDarkMode ? 'border-[#3a3a3c] bg-[#2c2c2e]/30' : 'border-gray-100 bg-gray-50/50'}`}>
-                                                <div className="flex justify-between items-start mb-2">
-                                                    <div>
-                                                        <div className={`text-[10px] ${ui.subtext}`}>{new Date(note.timestamp).toLocaleString()}</div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => handleDeleteNote(note.id)}
-                                                        className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500/50 hover:text-red-500 transition-all"
-                                                        title="Delete note"
-                                                    >
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                                    </button>
-                                                </div>
-                                                <div className={`text-sm ${ui.heading} whitespace-pre-wrap`}>{note.body}</div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ) : (
-                            <div className={`rounded-3xl p-6 sm:p-8 ${ui.card}`}>
-                                <div className="flex items-center justify-between mb-6">
-                                    <div>
-                                        <h3 className={`text-lg font-semibold ${ui.heading}`}>Captured Leads</h3>
-                                        <p className={`text-xs ${ui.subtext} mt-1`}>Automatic data collection from your Phone Agent</p>
-                                    </div>
-                                    <div className={`px-3 py-1 rounded-full text-xs font-semibold ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
-                                        {capturedLeads.length} total
-                                    </div>
-                                </div>
-
-                                {fetchingLeads ? (
-                                    <div className="flex justify-center py-10">
-                                        <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
-                                    </div>
-                                ) : capturedLeads.length === 0 ? (
-                                    <div className={`text-center py-12 rounded-2xl border-2 border-dashed ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-100'}`}>
-                                        <div className={`text-sm ${ui.subtext}`}>No leads captured yet</div>
-                                        <p className={`text-[10px] ${ui.subtext} mt-1`}>Leads will appear here once your agent collects info from callers.</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-4">
-                                        {capturedLeads.map((lead) => (
-                                            <div key={lead.id} className={`rounded-2xl p-4 border ${isDarkMode ? 'border-[#3a3a3c] bg-[#2c2c2e]/30' : 'border-gray-100 bg-gray-50/50'}`}>
-                                                <div className="flex justify-between items-start mb-3">
-                                                    <div>
-                                                        <div className={`text-sm font-semibold ${ui.heading}`}>{lead.callerNumber || 'Unknown Caller'}</div>
-                                                        <div className={`text-[10px] ${ui.subtext}`}>{new Date(lead.timestamp).toLocaleString()}</div>
-                                                    </div>
-                                                    <button
-                                                        onClick={() => handleDeleteLead(lead.id)}
-                                                        className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500/50 hover:text-red-500 transition-all"
-                                                    >
-                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                                    </button>
-                                                </div>
-
-                                                <div className="grid grid-cols-2 gap-3">
-                                                    {Object.entries(lead.data || {}).map(([key, val]) => (
-                                                        <div key={key}>
-                                                            <div className={`text-[10px] uppercase tracking-wider font-semibold ${ui.label}`}>{key}</div>
-                                                            <div className={`text-sm ${ui.heading}`}>{val as string || '-'}</div>
+                                    {fetchingNotes ? (
+                                        <div className="flex justify-center py-10">
+                                            <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                                        </div>
+                                    ) : capturedNotes.length === 0 ? (
+                                        <div className={`text-center py-12 rounded-2xl border-2 border-dashed ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-100'}`}>
+                                            <div className={`text-sm ${ui.subtext}`}>No notes saved yet</div>
+                                            <p className={`text-[10px] ${ui.subtext} mt-1`}>Send an SMS to your dedicated Note Agent number to create notes.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                                            {capturedNotes.map((note) => (
+                                                <div key={note.id} className={`rounded-2xl p-4 border ${isDarkMode ? 'border-[#3a3a3c] bg-[#2c2c2e]/30' : 'border-gray-100 bg-gray-50/50'}`}>
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <div>
+                                                            <div className={`text-[10px] ${ui.subtext}`}>{new Date(note.timestamp).toLocaleString()}</div>
                                                         </div>
-                                                    ))}
-                                                </div>
-
-                                                {(lead.agentName || lead.agentInstructions) && (
-                                                    <div className={`mt-3 pt-3 border-t ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-200'}`}>
-                                                        <div className={`text-[9px] uppercase tracking-wider font-semibold ${ui.label} mb-1`}>Agent Context</div>
-                                                        {lead.agentName && <div className={`text-[10px] ${ui.heading}`}>Agent: {lead.agentName}</div>}
-                                                        {lead.agentInstructions && (
-                                                            <div className={`text-[10px] ${ui.subtext} italic mt-0.5 mt-0.5 line-clamp-1`}>
-                                                                "{lead.agentInstructions}"
-                                                            </div>
-                                                        )}
+                                                        <button
+                                                            onClick={() => handleDeleteNote(note.id)}
+                                                            className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500/50 hover:text-red-500 transition-all"
+                                                            title="Delete note"
+                                                        >
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                        </button>
                                                     </div>
-                                                )}
-                                            </div>
-                                        ))}
+                                                    <div className={`text-sm ${ui.heading} whitespace-pre-wrap`}>{note.body}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {(hasLeadsMode || capturedLeads.length > 0) && (
+                                <div className={`rounded-3xl p-6 sm:p-8 ${ui.card}`}>
+                                    <div className="flex items-center justify-between mb-6">
+                                        <div>
+                                            <h3 className={`text-lg font-semibold ${ui.heading}`}>Captured Leads</h3>
+                                            <p className={`text-xs ${ui.subtext} mt-1`}>Automatic data collection from your Lead Agents</p>
+                                        </div>
+                                        <div className={`px-3 py-1 rounded-full text-xs font-semibold ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                                            {capturedLeads.length} total
+                                        </div>
                                     </div>
-                                )}
-                            </div>
-                        )}
+
+                                    {fetchingLeads ? (
+                                        <div className="flex justify-center py-10">
+                                            <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                                        </div>
+                                    ) : capturedLeads.length === 0 ? (
+                                        <div className={`text-center py-12 rounded-2xl border-2 border-dashed ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-100'}`}>
+                                            <div className={`text-sm ${ui.subtext}`}>No leads captured yet</div>
+                                            <p className={`text-[10px] ${ui.subtext} mt-1`}>Leads will appear here once your agent collects info from callers.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-4">
+                                            {capturedLeads.map((lead) => (
+                                                <div key={lead.id} className={`rounded-2xl p-4 border ${isDarkMode ? 'border-[#3a3a3c] bg-[#2c2c2e]/30' : 'border-gray-100 bg-gray-50/50'}`}>
+                                                    <div className="flex justify-between items-start mb-3">
+                                                        <div>
+                                                            <div className={`text-sm font-semibold ${ui.heading}`}>{lead.callerNumber || 'Unknown Caller'}</div>
+                                                            <div className={`text-[10px] ${ui.subtext}`}>{new Date(lead.timestamp).toLocaleString()}</div>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => handleDeleteLead(lead.id)}
+                                                            className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500/50 hover:text-red-500 transition-all"
+                                                        >
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                        </button>
+                                                    </div>
+
+                                                    <div className="grid grid-cols-2 gap-3">
+                                                        {Object.entries(lead.data || {}).map(([key, val]) => (
+                                                            <div key={key}>
+                                                                <div className={`text-[10px] uppercase tracking-wider font-semibold ${ui.label}`}>{key}</div>
+                                                                <div className={`text-sm ${ui.heading}`}>{val as string || '-'}</div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+
+                                                    {(lead.agentName || lead.agentInstructions) && (
+                                                        <div className={`mt-3 pt-3 border-t ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-200'}`}>
+                                                            <div className={`text-[9px] uppercase tracking-wider font-semibold ${ui.label} mb-1`}>Agent Context</div>
+                                                            {lead.agentName && <div className={`text-[10px] ${ui.heading}`}>Agent: {lead.agentName}</div>}
+                                                            {lead.agentInstructions && (
+                                                                <div className={`text-[10px] ${ui.subtext} italic mt-0.5 mt-0.5 line-clamp-1`}>
+                                                                    "{lead.agentInstructions}"
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
 
                         {/* Account Info & Data Settings */}
                         <div className={`rounded-3xl p-6 sm:p-8 ${ui.card}`}>
                             <h3 className={`text-lg font-semibold mb-4 ${ui.heading}`}>Account & Data</h3>
 
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                                <div>
-                                    <div className={`text-sm font-medium mb-1 ${ui.label}`}>Email Address</div>
-                                    <div className={`text-base ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{profile.email || 'No email linked'}</div>
-                                    <div className={`mt-1 text-xs ${ui.subtext}`}>Managed via Google Auth</div>
+                            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-6">
+                                <div className="space-y-5">
+                                    <div>
+                                        <div className={`text-sm font-medium mb-1 ${ui.label}`}>Email Address</div>
+                                        <div className={`text-base ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{profile.email || 'No email linked'}</div>
+                                        <div className={`mt-1 text-xs ${ui.subtext}`}>Managed via Google Auth</div>
+                                    </div>
+                                    <div>
+                                        <div className={`text-sm font-medium mb-2 ${ui.label}`}>Personal Phone Number</div>
+                                        {profile.personalPhoneNumber ? (
+                                            <div className="flex items-center gap-3 max-w-xs">
+                                                <div className={`flex-1 px-4 py-2 text-sm rounded-xl border opacity-70 cursor-not-allowed ${ui.input}`}>
+                                                    {profile.personalPhoneNumber}
+                                                </div>
+                                                <span className="text-green-500 text-[10px] font-bold uppercase tracking-wider px-2 py-1 bg-green-500/10 rounded-lg">Verified</span>
+                                                <button onClick={() => {
+                                                    setProfile(prev => ({...prev, personalPhoneNumber: ''}));
+                                                    setVerifyStatus('idle');
+                                                    setVerifyPhoneInput('');
+                                                    setVerifyCodeInput('');
+                                                }} className={`text-[10px] hover:underline ${ui.subtext}`}>Change</button>
+                                            </div>
+                                        ) : verifyStatus === 'pending_code' || verifyStatus === 'verifying' ? (
+                                            <div className="flex gap-2 max-w-xs">
+                                                <input 
+                                                    type="text" 
+                                                    value={verifyCodeInput} 
+                                                    onChange={e => setVerifyCodeInput(e.target.value)} 
+                                                    placeholder="000000" 
+                                                    className={`flex-1 px-4 py-2 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`} 
+                                                />
+                                                <button 
+                                                    onClick={handleCheckVerification} 
+                                                    disabled={verifyStatus === 'verifying'} 
+                                                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${ui.buttonPrimary} disabled:opacity-50 min-w-[80px]`}
+                                                >
+                                                    {verifyStatus === 'verifying' ? '...' : 'Verify'}
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <div className="flex gap-2 max-w-xs">
+                                                <input 
+                                                    type="text" 
+                                                    value={verifyPhoneInput} 
+                                                    onChange={e => setVerifyPhoneInput(e.target.value)} 
+                                                    placeholder="+1 (555) 555-5555" 
+                                                    className={`flex-1 px-4 py-2 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`} 
+                                                />
+                                                <button 
+                                                    onClick={handleSendVerification} 
+                                                    disabled={verifyStatus === 'sending' || verifyPhoneInput.length < 5} 
+                                                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-colors ${ui.buttonPrimary} disabled:opacity-50 min-w-[80px]`}
+                                                >
+                                                    {verifyStatus === 'sending' ? '...' : 'Link'}
+                                                </button>
+                                            </div>
+                                        )}
+                                        <div className={`mt-1.5 text-[10px] sm:max-w-xs ${ui.subtext}`}>
+                                            Used as caller-ID to verify you for features like Voice Setup. Verify to claim phone agents you set up over phone.
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <div className="flex flex-col items-start sm:items-end gap-2">
