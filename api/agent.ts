@@ -136,6 +136,110 @@ export default {
             }
         }
 
+        // ── Twilio Phone Verification (merged from api/verify.ts) ──────────────
+        if (op === 'verify-send' || op === 'verify-check') {
+            if (request.method !== 'POST') return error('Method not allowed', 405);
+            try {
+                const body = await request.json().catch(() => ({}));
+                const phoneNumber = body.phoneNumber;
+                if (!phoneNumber) return error('Missing phoneNumber');
+
+                const authHeader = request.headers.get('Authorization');
+                if (!authHeader?.startsWith('Bearer ')) return error('Unauthorized', 401);
+                const token = authHeader.split('Bearer ')[1];
+                let uid = '';
+                try {
+                    const decoded = await getAuth(agentService.adminApp()).verifyIdToken(token);
+                    uid = decoded.uid;
+                } catch {
+                    return error('Invalid token', 401);
+                }
+
+                const accountSid = process.env.TWILIO_ACCOUNT_SID;
+                const authToken = process.env.TWILIO_AUTH_TOKEN;
+                if (!accountSid || !authToken) throw new Error("Missing Twilio credentials");
+
+                const authStr = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+                const serviceSid = await phoneAgentService.getOrCreateVerifyService('FreshFront Verify');
+
+                if (op === 'verify-send') {
+                    const reqBody = new URLSearchParams();
+                    reqBody.append('To', phoneNumber);
+                    reqBody.append('Channel', 'sms');
+
+                    const res = await fetch(`https://verify.twilio.com/v2/Services/${serviceSid}/Verifications`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Basic ${authStr}`,
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        body: reqBody.toString()
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.message || 'Twilio Verify API Error');
+                    
+                    return json({ success: true, status: data.status });
+                }
+
+                if (op === 'verify-check') {
+                    const code = body.code;
+                    if (!code) return error('Missing verification code');
+
+                    const reqBody = new URLSearchParams();
+                    reqBody.append('To', phoneNumber);
+                    reqBody.append('Code', code);
+
+                    const res = await fetch(`https://verify.twilio.com/v2/Services/${serviceSid}/VerificationCheck`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Basic ${authStr}`,
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        },
+                        body: reqBody.toString()
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.message || 'Twilio Verify API Error');
+
+                    if (data.status === 'approved') {
+                        const db = getFirestore(agentService.adminApp());
+                        const userRef = db.collection('users').doc(uid);
+                        await userRef.update({ personalPhoneNumber: phoneNumber });
+
+                        const unclaimedSnap = await db.collection('unclaimedAgents').where('personalPhoneNumber', '==', phoneNumber).get();
+                        let claimedCount = 0;
+                        
+                        if (!unclaimedSnap.empty) {
+                            const userSnap = await userRef.get();
+                            const userData = userSnap.data() || {};
+                            const newList = [...(userData.agentPhoneNumbersList || [])];
+                            const allConfigs = { ...(userData.agentPhoneConfigs || {}) };
+
+                            for (const doc of unclaimedSnap.docs) {
+                                const twilioNumber = doc.id;
+                                const docData = doc.data();
+                                if (!newList.includes(twilioNumber)) newList.push(twilioNumber);
+                                allConfigs[twilioNumber] = docData.agentPhoneConfig || docData.config;
+                                await doc.ref.delete();
+                                claimedCount++;
+                            }
+
+                            await userRef.update({
+                                agentPhoneNumbersList: newList,
+                                agentPhoneConfigs: allConfigs
+                            });
+                        }
+                        
+                        return json({ success: true, status: 'approved', claimedCount });
+                    } else {
+                        return json({ success: false, status: data.status });
+                    }
+                }
+            } catch (e: any) {
+                console.error('[Verify API]', e);
+                return error(e.message, 500);
+            }
+        }
+
         // ── Gemini Chat (merged from api/gemini.ts) ───────────────────────────
         if (op === 'chat') {
             if (request.method !== 'POST') return error('Method not allowed', 405);
@@ -320,17 +424,28 @@ export default {
             console.log(`[twilio-webhook] Incoming: From=${from} To=${to} MessageSid=${messageSid} Body="${bodyStr}" Media=${numMedia}`);
 
             // ─── NOTE MODE: silently store SMS as a note (if trainer), or answer conversationally (if not)
+            // ─── NOTE MODE: silently store SMS as a note (if trainer), or answer conversationally (if not)
             try {
-                const usersSnap = await db.collection('users')
-                    .where('agentPhoneNumber', '==', to)
+                let usersSnap = await db.collection('users')
+                    .where('agentPhoneNumbersList', 'array-contains', to)
                     .limit(1)
                     .get();
+                
+                if (usersSnap.empty) {
+                    usersSnap = await db.collection('users')
+                        .where('agentPhoneNumber', '==', to)
+                        .limit(1)
+                        .get();
+                }
+
                 if (!usersSnap.empty) {
                     const userData = usersSnap.docs[0].data();
-                    if (userData?.agentPhoneConfig?.mode === 'note' && userData?.agentPhoneConfig?.enabled) {
+                    const activeConfig = userData.agentPhoneConfigs?.[to] || userData.agentPhoneConfig;
+
+                    if ((activeConfig?.mode === 'note' || activeConfig?.mode === 'notes') && activeConfig?.enabled) {
                         const uid = usersSnap.docs[0].id;
                         
-                        const trainerStr = userData.agentPhoneConfig.trainerNumbers || '';
+                        const trainerStr = activeConfig.trainerNumbers || '';
                         const trainers = trainerStr.split(',').map((n: string) => n.replace(/\D/g, '')).filter(Boolean);
                         const incomingNum = from.replace(/\D/g, '');
                         
@@ -522,11 +637,25 @@ export default {
 
                     // Auto-assign to user
                     const db = getFirestore(agentService.adminApp());
-                    await db.collection('users').doc(uid).set({
-                        agentPhoneNumber: phoneNumber,
-                        agentPhoneConfig: {
-                            ...(body.existingConfig || {}),
-                            enabled: true,
+                    const userRef = db.collection('users').doc(uid);
+                    const userSnap = await userRef.get();
+                    const userData = userSnap.exists ? userSnap.data() || {} : {};
+                    
+                    const newList = [...(userData.agentPhoneNumbersList || [])];
+                    if (!newList.includes(phoneNumber)) newList.push(phoneNumber);
+                    
+                    const newConfig = {
+                        ...(body.existingConfig || { mode: 'projects' }),
+                        enabled: true,
+                    };
+
+                    await userRef.set({
+                        agentPhoneNumber: phoneNumber, // maintain legacy fallback
+                        agentPhoneConfig: newConfig,
+                        agentPhoneNumbersList: newList,
+                        agentPhoneConfigs: {
+                            ...(userData.agentPhoneConfigs || {}),
+                            [phoneNumber]: newConfig
                         }
                     }, { merge: true });
 
