@@ -319,9 +319,40 @@ export default {
 
             console.log(`[twilio-webhook] Incoming: From=${from} To=${to} MessageSid=${messageSid} Body="${bodyStr}" Media=${numMedia}`);
 
+            // ─── NOTE MODE: silently store SMS as a note, no reply ─────────────
+            // Look up user by 'to' number and check if mode is 'note'
+            try {
+                const usersSnap = await db.collection('users')
+                    .where('agentPhoneNumber', '==', to)
+                    .limit(1)
+                    .get();
+                if (!usersSnap.empty) {
+                    const userData = usersSnap.docs[0].data();
+                    if (userData?.agentPhoneConfig?.mode === 'note' && userData?.agentPhoneConfig?.enabled) {
+                        const uid = usersSnap.docs[0].id;
+                        const noteBody = bodyStr || '';
+                        if (noteBody.trim()) {
+                            await db.collection('users').doc(uid).collection('phoneAgentNotes').add({
+                                body: noteBody,
+                                from,
+                                timestamp: Date.now()
+                            });
+                            console.log(`[twilio-webhook] Note Mode: saved note from ${from} for user ${uid}`);
+                        }
+                        // Return empty TwiML — no reply
+                        const twiml = `<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>`;
+                        return new Response(twiml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
+                    }
+                }
+            } catch (noteErr) {
+                console.error('[twilio-webhook] Note Mode lookup error:', noteErr);
+                // Fall through to normal processing
+            }
+
             // Process in background — send result via Twilio REST API
             // This prevents Twilio's 15-second webhook timeout from killing long-running tools
             const processTask = (async () => {
+
                 const logRef = db.collection('agentLogs').doc();
                 try {
                     await logRef.set({
