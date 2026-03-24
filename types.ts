@@ -43,13 +43,15 @@ export interface PhoneAgentLead {
 
 export interface PhoneAgentConfig {
   enabled: boolean;
-  mode?: 'personal' | 'note';
+  mode?: 'projects' | 'notes' | 'leads';
   trainerNumbers?: string;
   welcomeGreeting?: string;
   systemPrompt?: string;
   businessHoursOnly?: boolean;
   leadCaptureEnabled?: boolean;
   leadFields?: PhoneAgentLeadField[];
+  leadDestination?: 'email' | 'sms' | 'app';
+  leadDestinationAddress?: string;
   voiceGender?: 'male' | 'female';
   voiceName?: string;
 }
@@ -59,11 +61,18 @@ export interface UserProfile {
   description?: string;
   photoURL?: string;
   email?: string;
+  personalPhoneNumber?: string;
   organizationId?: string | null;
   themePreference?: 'dark' | 'light' | 'system';
   stripeConnect?: any;
+  
+  // Legacy single-number fields
   agentPhoneNumber?: string;
   agentPhoneConfig?: PhoneAgentConfig;
+  
+  // New multi-number fields
+  agentPhoneNumbersList?: string[];
+  agentPhoneConfigs?: Record<string, PhoneAgentConfig>;
 }
 
 export interface GroundingChunk {
