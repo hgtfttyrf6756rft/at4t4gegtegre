@@ -160,7 +160,7 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
         setVerifyStatus('sending');
         try {
             const token = await auth.currentUser?.getIdToken();
-            const res = await fetch('/api/verify?op=send', {
+            const res = await fetch('/api/agent?op=verify-send', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -186,7 +186,7 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
         setVerifyStatus('verifying');
         try {
             const token = await auth.currentUser?.getIdToken();
-            const res = await fetch('/api/verify?op=check', {
+            const res = await fetch('/api/agent?op=verify-check', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
