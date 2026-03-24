@@ -491,43 +491,28 @@ export default {
                 const isNoteMode = hotlineConfig?.enabled || (isUnlinkedOwner && unclaimedData?.agentPhoneConfig?.mode === 'notes');
 
                 if (isNoteMode && isNoteOwner && bodyStr?.trim()) {
-                    // ─── Save the note ───
+                    // ─── Owner text: always training-only, no conversational reply ───
                     if (isLinkedOwner && linkedUserRef) {
+                        // Linked owner: save note silently, apply upsell counter too
+                        const notesSnap = await db.collection('users').doc(linkedUid).collection('phoneAgentNotes').get();
+                        const currentCount = notesSnap.size + 1;
+
                         await db.collection('users').doc(linkedUid).collection('phoneAgentNotes').add({
                             body: bodyStr,
                             from,
                             timestamp: Date.now()
                         });
-                        console.log(`[twilio-webhook] Note Mode: saved note from linked owner ${from} for user ${linkedUid}`);
+                        console.log(`[twilio-webhook] Note Mode: saved training note #${currentCount} from linked owner ${from} for user ${linkedUid}`);
 
-                        // ─── Chatbot reply for linked owners ───
-                        // Load last 20 notes for context
-                        const notesSnap = await db.collection('users').doc(linkedUid)
-                            .collection('phoneAgentNotes')
-                            .orderBy('timestamp', 'desc')
-                            .limit(20)
-                            .get();
-                        const notesContext = notesSnap.docs
-                            .map(d => `[${new Date(d.data().timestamp).toLocaleString()}] ${d.data().body}`)
-                            .join('\n');
-
-                        const { GoogleGenAI } = await import('@google/genai');
-                        const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.API_KEY || '' });
-                        const chatPrompt = `You are a helpful AI assistant for this phone hotline. The user just texted: "${bodyStr}"\n\nHere are the notes stored in this hotline so far:\n${notesContext || '(no notes yet)'}\n\nRespond conversationally in 1-2 short sentences, like a smart chatbot. Acknowledge if you stored their note, and answer any question they asked.`;
-
-                        const chatResp = await genai.models.generateContent({
-                            model: 'gemini-2.0-flash',
-                            contents: [{ role: 'user', parts: [{ text: chatPrompt }] }]
-                        });
-                        const replyText = chatResp.text || 'Got it! Note saved.';
-
-                        await phoneAgentService.sendTwilioSms(from, to, replyText);
+                        if (currentCount === 3) {
+                            const upsellMsg = `Note saved! ✨ Tip: your hotline is now learning from your texts. Visit freshfront.co → Profile Settings to manage your hotline and unlock your full dashboard. (Pro plan)`;
+                            await phoneAgentService.sendTwilioSms(from, to, upsellMsg);
+                        }
                     } else if (isUnlinkedOwner && unclaimedRef) {
                         // ─── Unlinked owner: store note counter and send upsell on 3rd ───
                         const currentCount = (unclaimedData?.ownerNoteCount || 0) + 1;
                         await unclaimedRef.update({ ownerNoteCount: currentCount });
 
-                        // Also persist the note in a subcollection
                         await unclaimedRef.collection('notes').add({
                             body: bodyStr,
                             from,
@@ -536,11 +521,12 @@ export default {
                         console.log(`[twilio-webhook] Note Mode: saved note #${currentCount} from unlinked owner ${from}`);
 
                         if (currentCount >= 3) {
-                            const upsellMsg = `You've added ${currentCount} notes to your hotline ✨ Sign up at freshfront.co → Profile Settings → link your phone number to unlock unlimited training, AI replies to your texts, and your full dashboard. (Pro plan required)`;
+                            const upsellMsg = `You've added ${currentCount} notes to your hotline ✨ Sign up at freshfront.co → Profile Settings → link your phone number to unlock unlimited training and your full dashboard. (Pro plan required)`;
                             await phoneAgentService.sendTwilioSms(from, to, upsellMsg);
                         }
                     }
 
+                    // Always return silent empty TwiML for owner — no reply
                     return new Response(`<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>`, {
                         status: 200, headers: { 'Content-Type': 'text/xml' }
                     });
