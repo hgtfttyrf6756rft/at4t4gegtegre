@@ -416,8 +416,9 @@ export default {
 
             // 4. Handle Twilio Error/Alert Webhooks (which contain ErrorCode instead of To/From)
             const errCode = formData.get('ErrorCode')?.toString();
-            if (errCode) {
-                console.error(`[twilio-webhook] Received Error/Alert Webhook from Twilio: ${errCode} - ${formData.get('Msg')?.toString()}`);
+            const msgBody = formData.get('Msg')?.toString();
+            if (errCode || msgBody) {
+                console.log(`[twilio-webhook] Received System/Error Webhook: ${errCode || 'N/A'} - ${msgBody || 'N/A'}`);
                 return new Response('OK', { status: 200 });
             }
 
