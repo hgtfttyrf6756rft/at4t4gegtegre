@@ -32,7 +32,10 @@ import {
   getSharedProjectTheme,
   logProjectActivity,
   getPhoneAgentLeads,
-  deletePhoneAgentLead
+  deletePhoneAgentLead,
+  getPhoneAgentNotes,
+  savePhoneAgentNote,
+  deletePhoneAgentNote
 } from './firebase.js';
 import { projectCache } from './projectCache.js';
 import { authFetch } from './authFetch.js';
@@ -1781,5 +1784,21 @@ export const storageService = {
   deletePhoneAgentLead: async (leadId: string): Promise<void> => {
     if (!currentUserUid) return;
     return await deletePhoneAgentLead(currentUserUid, leadId);
+  },
+
+  // ─── Note Mode phone agent notes ───────────────────────────────────────────
+  getPhoneAgentNotes: async (): Promise<any[]> => {
+    if (!currentUserUid) return [];
+    return await getPhoneAgentNotes(currentUserUid);
+  },
+
+  savePhoneAgentNote: async (note: { body: string; from: string; timestamp: number }): Promise<string> => {
+    if (!currentUserUid) throw new Error('Not signed in');
+    return await savePhoneAgentNote(currentUserUid, note);
+  },
+
+  deletePhoneAgentNote: async (noteId: string): Promise<void> => {
+    if (!currentUserUid) return;
+    return await deletePhoneAgentNote(currentUserUid, noteId);
   }
 };
