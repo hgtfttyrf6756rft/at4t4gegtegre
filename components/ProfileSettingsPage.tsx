@@ -44,6 +44,10 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
     const [capturedLeads, setCapturedLeads] = useState<any[]>([]);
     const [fetchingLeads, setFetchingLeads] = useState(false);
 
+    // Note Mode State
+    const [capturedNotes, setCapturedNotes] = useState<any[]>([]);
+    const [fetchingNotes, setFetchingNotes] = useState(false);
+
     const { subscription, showUpgradeModal, openUpgradeModal, closeUpgradeModal } = useSubscription();
     const isPro = subscription.subscribed || subscription.subscriptionTier === 'pro' || subscription.subscriptionTier === 'unlimited';
 
@@ -83,8 +87,21 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
             }
         };
 
+        const loadNotes = async () => {
+            try {
+                setFetchingNotes(true);
+                const notes = await storageService.getPhoneAgentNotes();
+                setCapturedNotes(notes);
+            } catch (e) {
+                console.error("Failed to load notes", e);
+            } finally {
+                setFetchingNotes(false);
+            }
+        };
+
         loadProfile();
         loadLeads();
+        loadNotes();
     }, []);
 
     // Helper to ensure default lead fields exist
@@ -286,6 +303,16 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
         }
     };
 
+    const handleDeleteNote = async (id: string) => {
+        if (!confirm('Are you sure you want to delete this note?')) return;
+        try {
+            await storageService.deletePhoneAgentNote(id);
+            setCapturedNotes(prev => prev.filter(n => n.id !== id));
+        } catch (e) {
+            console.error("Failed to delete note", e);
+        }
+    };
+
     // UI Theme classes
     const ui = {
         page: isDarkMode ? 'bg-[#000000] text-white' : 'bg-gray-50 text-gray-900',
@@ -480,6 +507,35 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                 {profile.agentPhoneConfig?.enabled && (
                                     <>
                                         <div className="pt-2">
+                                            <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Agent Mode</label>
+                                            <div className="flex bg-[#2c2c2e]/50 p-1 rounded-xl border border-[#3a3a3c] space-x-1">
+                                                <button
+                                                    onClick={() => setProfile(prev => ({
+                                                        ...prev,
+                                                        agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), mode: 'personal' }
+                                                    }))}
+                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${(profile.agentPhoneConfig?.mode === 'personal' || !profile.agentPhoneConfig?.mode) ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                >
+                                                    Personal / Client
+                                                </button>
+                                                <button
+                                                    onClick={() => setProfile(prev => ({
+                                                        ...prev,
+                                                        agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), mode: 'note' }
+                                                    }))}
+                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${profile.agentPhoneConfig?.mode === 'note' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                >
+                                                    Note Mode
+                                                </button>
+                                            </div>
+                                            <p className={`mt-2 text-[10px] ${ui.subtext}`}>
+                                                {profile.agentPhoneConfig?.mode === 'note' 
+                                                    ? "Text notes to this number. Call the number to talk to an AI that strictly answers based on your notes."
+                                                    : "Acts as a general assistant that can be customized with persona instructions and capture lead info."}
+                                            </p>
+                                        </div>
+
+                                        <div className="pt-2">
                                             <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Welcome Greeting (Spoken by Twilio)</label>
                                             <textarea
                                                 rows={2}
@@ -549,62 +605,64 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                         </div>
 
                                         {/* Lead Capture Settings */}
-                                        <div className="pt-4 border-t border-[#3a3a3c]/30 mt-4">
-                                            <div className="flex items-center justify-between mb-4">
-                                                <h4 className={`text-sm font-semibold ${ui.label}`}>Lead Capture Settings</h4>
-                                                <label className="relative inline-flex items-center cursor-pointer">
-                                                    <input
-                                                        type="checkbox"
-                                                        className="sr-only peer"
-                                                        checked={profile.agentPhoneConfig?.leadCaptureEnabled}
-                                                        onChange={e => setProfile(prev => ({
-                                                            ...prev,
-                                                            agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), leadCaptureEnabled: e.target.checked }
-                                                        }))}
-                                                    />
-                                                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
-                                                    <span className={`ml-3 text-xs font-medium ${ui.label}`}>Enabled</span>
-                                                </label>
-                                            </div>
-
-                                            {profile.agentPhoneConfig?.leadCaptureEnabled && (
-                                                <div className="space-y-3">
-                                                    <p className={`text-xs ${ui.subtext} mb-2`}>Specify fields for the AI agent to collect during the conversation.</p>
-                                                    {(profile.agentPhoneConfig?.leadFields || []).map((field, idx) => (
-                                                        <div key={field.id} className="flex items-center gap-2 group">
-                                                            <input
-                                                                type="text"
-                                                                value={field.name}
-                                                                onChange={e => updateLeadField(field.id, { name: e.target.value })}
-                                                                placeholder="Field Name"
-                                                                className={`flex-1 px-3 py-1.5 text-sm rounded-lg border focus:outline-none ${ui.input}`}
-                                                            />
-                                                            <label className="flex items-center gap-1.5 cursor-pointer">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={field.required}
-                                                                    onChange={e => updateLeadField(field.id, { required: e.target.checked })}
-                                                                    className="rounded border-gray-400 text-blue-600 focus:ring-blue-500"
-                                                                />
-                                                                <span className={`text-[10px] font-medium uppercase tracking-wider ${ui.label}`}>Req</span>
-                                                            </label>
-                                                            <button
-                                                                onClick={() => removeLeadField(field.id)}
-                                                                className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 opacity-40 hover:opacity-100 transition-all"
-                                                            >
-                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                                            </button>
-                                                        </div>
-                                                    ))}
-                                                    <button
-                                                        onClick={addLeadField}
-                                                        className={`w-full mt-2 py-2 border-2 border-dashed rounded-xl text-xs font-medium transition-all ${isDarkMode ? 'border-[#3a3a3c] hover:border-blue-500/50 text-[#86868b] hover:text-blue-400' : 'border-gray-200 hover:border-blue-500/50 text-gray-500 hover:text-blue-600'}`}
-                                                    >
-                                                        + Add Field
-                                                    </button>
+                                        {profile.agentPhoneConfig?.mode !== 'note' && (
+                                            <div className="pt-4 border-t border-[#3a3a3c]/30 mt-4">
+                                                <div className="flex items-center justify-between mb-4">
+                                                    <h4 className={`text-sm font-semibold ${ui.label}`}>Lead Capture Settings</h4>
+                                                    <label className="relative inline-flex items-center cursor-pointer">
+                                                        <input
+                                                            type="checkbox"
+                                                            className="sr-only peer"
+                                                            checked={profile.agentPhoneConfig?.leadCaptureEnabled}
+                                                            onChange={e => setProfile(prev => ({
+                                                                ...prev,
+                                                                agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), leadCaptureEnabled: e.target.checked }
+                                                            }))}
+                                                        />
+                                                        <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                                        <span className={`ml-3 text-xs font-medium ${ui.label}`}>Enabled</span>
+                                                    </label>
                                                 </div>
-                                            )}
-                                        </div>
+
+                                                {profile.agentPhoneConfig?.leadCaptureEnabled && (
+                                                    <div className="space-y-3">
+                                                        <p className={`text-xs ${ui.subtext} mb-2`}>Specify fields for the AI agent to collect during the conversation.</p>
+                                                        {(profile.agentPhoneConfig?.leadFields || []).map((field, idx) => (
+                                                            <div key={field.id} className="flex items-center gap-2 group">
+                                                                <input
+                                                                    type="text"
+                                                                    value={field.name}
+                                                                    onChange={e => updateLeadField(field.id, { name: e.target.value })}
+                                                                    placeholder="Field Name"
+                                                                    className={`flex-1 px-3 py-1.5 text-sm rounded-lg border focus:outline-none ${ui.input}`}
+                                                                />
+                                                                <label className="flex items-center gap-1.5 cursor-pointer">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={field.required}
+                                                                        onChange={e => updateLeadField(field.id, { required: e.target.checked })}
+                                                                        className="rounded border-gray-400 text-blue-600 focus:ring-blue-500"
+                                                                    />
+                                                                    <span className={`text-[10px] font-medium uppercase tracking-wider ${ui.label}`}>Req</span>
+                                                                </label>
+                                                                <button
+                                                                    onClick={() => removeLeadField(field.id)}
+                                                                    className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500 opacity-40 hover:opacity-100 transition-all"
+                                                                >
+                                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                        <button
+                                                            onClick={addLeadField}
+                                                            className={`w-full mt-2 py-2 border-2 border-dashed rounded-xl text-xs font-medium transition-all ${isDarkMode ? 'border-[#3a3a3c] hover:border-blue-500/50 text-[#86868b] hover:text-blue-400' : 'border-gray-200 hover:border-blue-500/50 text-gray-500 hover:text-blue-600'}`}
+                                                        >
+                                                            + Add Field
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
                                     </>
                                 )}
 
@@ -650,69 +708,114 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                             )}
                         </div>
 
-                        {/* Captured Leads Section */}
-                        <div className={`rounded-3xl p-6 sm:p-8 ${ui.card}`}>
-                            <div className="flex items-center justify-between mb-6">
-                                <div>
-                                    <h3 className={`text-lg font-semibold ${ui.heading}`}>Captured Leads</h3>
-                                    <p className={`text-xs ${ui.subtext} mt-1`}>Automatic data collection from your Phone Agent</p>
+                        {/* Captured Leads / Note Mode Section */}
+                        {profile.agentPhoneConfig?.enabled && profile.agentPhoneConfig?.mode === 'note' ? (
+                            <div className={`rounded-3xl p-6 sm:p-8 ${ui.card}`}>
+                                <div className="flex items-center justify-between mb-6">
+                                    <div>
+                                        <h3 className={`text-lg font-semibold ${ui.heading}`}>My Notes</h3>
+                                        <p className={`text-xs ${ui.subtext} mt-1`}>Text your agent number to save notes silently</p>
+                                    </div>
+                                    <div className={`px-3 py-1 rounded-full text-xs font-semibold ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                                        {capturedNotes.length} total
+                                    </div>
                                 </div>
-                                <div className={`px-3 py-1 rounded-full text-xs font-semibold ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
-                                    {capturedLeads.length} total
-                                </div>
-                            </div>
 
-                            {fetchingLeads ? (
-                                <div className="flex justify-center py-10">
-                                    <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
-                                </div>
-                            ) : capturedLeads.length === 0 ? (
-                                <div className={`text-center py-12 rounded-2xl border-2 border-dashed ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-100'}`}>
-                                    <div className={`text-sm ${ui.subtext}`}>No leads captured yet</div>
-                                    <p className={`text-[10px] ${ui.subtext} mt-1`}>Leads will appear here once your agent collects info from callers.</p>
-                                </div>
-                            ) : (
-                                <div className="space-y-4">
-                                    {capturedLeads.map((lead) => (
-                                        <div key={lead.id} className={`rounded-2xl p-4 border ${isDarkMode ? 'border-[#3a3a3c] bg-[#2c2c2e]/30' : 'border-gray-100 bg-gray-50/50'}`}>
-                                            <div className="flex justify-between items-start mb-3">
-                                                <div>
-                                                    <div className={`text-sm font-semibold ${ui.heading}`}>{lead.callerNumber || 'Unknown Caller'}</div>
-                                                    <div className={`text-[10px] ${ui.subtext}`}>{new Date(lead.timestamp).toLocaleString()}</div>
-                                                </div>
-                                                <button
-                                                    onClick={() => handleDeleteLead(lead.id)}
-                                                    className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500/50 hover:text-red-500 transition-all"
-                                                >
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                                </button>
-                                            </div>
-
-                                            <div className="grid grid-cols-2 gap-3">
-                                                {Object.entries(lead.data || {}).map(([key, val]) => (
-                                                    <div key={key}>
-                                                        <div className={`text-[10px] uppercase tracking-wider font-semibold ${ui.label}`}>{key}</div>
-                                                        <div className={`text-sm ${ui.heading}`}>{val as string || '-'}</div>
+                                {fetchingNotes ? (
+                                    <div className="flex justify-center py-10">
+                                        <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                                    </div>
+                                ) : capturedNotes.length === 0 ? (
+                                    <div className={`text-center py-12 rounded-2xl border-2 border-dashed ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-100'}`}>
+                                        <div className={`text-sm ${ui.subtext}`}>No notes saved yet</div>
+                                        <p className={`text-[10px] ${ui.subtext} mt-1`}>Send an SMS to {profile.agentPhoneNumber || 'your agent number'} to create your first note.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                                        {capturedNotes.map((note) => (
+                                            <div key={note.id} className={`rounded-2xl p-4 border ${isDarkMode ? 'border-[#3a3a3c] bg-[#2c2c2e]/30' : 'border-gray-100 bg-gray-50/50'}`}>
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <div>
+                                                        <div className={`text-[10px] ${ui.subtext}`}>{new Date(note.timestamp).toLocaleString()}</div>
                                                     </div>
-                                                ))}
-                                            </div>
-
-                                            {(lead.agentName || lead.agentInstructions) && (
-                                                <div className={`mt-3 pt-3 border-t ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-200'}`}>
-                                                    <div className={`text-[9px] uppercase tracking-wider font-semibold ${ui.label} mb-1`}>Agent Context</div>
-                                                    {lead.agentName && <div className={`text-[10px] ${ui.heading}`}>Agent: {lead.agentName}</div>}
-                                                    {lead.agentInstructions && (
-                                                        <div className={`text-[10px] ${ui.subtext} italic mt-0.5 mt-0.5 line-clamp-1`}>
-                                                            "{lead.agentInstructions}"
-                                                        </div>
-                                                    )}
+                                                    <button
+                                                        onClick={() => handleDeleteNote(note.id)}
+                                                        className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500/50 hover:text-red-500 transition-all"
+                                                        title="Delete note"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                    </button>
                                                 </div>
-                                            )}
-                                        </div>
-                                    ))}
+                                                <div className={`text-sm ${ui.heading} whitespace-pre-wrap`}>{note.body}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <div className={`rounded-3xl p-6 sm:p-8 ${ui.card}`}>
+                                <div className="flex items-center justify-between mb-6">
+                                    <div>
+                                        <h3 className={`text-lg font-semibold ${ui.heading}`}>Captured Leads</h3>
+                                        <p className={`text-xs ${ui.subtext} mt-1`}>Automatic data collection from your Phone Agent</p>
+                                    </div>
+                                    <div className={`px-3 py-1 rounded-full text-xs font-semibold ${isDarkMode ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                                        {capturedLeads.length} total
+                                    </div>
                                 </div>
-                            )}
-                        </div>
+
+                                {fetchingLeads ? (
+                                    <div className="flex justify-center py-10">
+                                        <div className="animate-spin rounded-full h-6 w-6 border-2 border-blue-500 border-t-transparent"></div>
+                                    </div>
+                                ) : capturedLeads.length === 0 ? (
+                                    <div className={`text-center py-12 rounded-2xl border-2 border-dashed ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-100'}`}>
+                                        <div className={`text-sm ${ui.subtext}`}>No leads captured yet</div>
+                                        <p className={`text-[10px] ${ui.subtext} mt-1`}>Leads will appear here once your agent collects info from callers.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {capturedLeads.map((lead) => (
+                                            <div key={lead.id} className={`rounded-2xl p-4 border ${isDarkMode ? 'border-[#3a3a3c] bg-[#2c2c2e]/30' : 'border-gray-100 bg-gray-50/50'}`}>
+                                                <div className="flex justify-between items-start mb-3">
+                                                    <div>
+                                                        <div className={`text-sm font-semibold ${ui.heading}`}>{lead.callerNumber || 'Unknown Caller'}</div>
+                                                        <div className={`text-[10px] ${ui.subtext}`}>{new Date(lead.timestamp).toLocaleString()}</div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => handleDeleteLead(lead.id)}
+                                                        className="p-1.5 rounded-lg hover:bg-red-500/10 text-red-500/50 hover:text-red-500 transition-all"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                                                    </button>
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    {Object.entries(lead.data || {}).map(([key, val]) => (
+                                                        <div key={key}>
+                                                            <div className={`text-[10px] uppercase tracking-wider font-semibold ${ui.label}`}>{key}</div>
+                                                            <div className={`text-sm ${ui.heading}`}>{val as string || '-'}</div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+
+                                                {(lead.agentName || lead.agentInstructions) && (
+                                                    <div className={`mt-3 pt-3 border-t ${isDarkMode ? 'border-[#3a3a3c]' : 'border-gray-200'}`}>
+                                                        <div className={`text-[9px] uppercase tracking-wider font-semibold ${ui.label} mb-1`}>Agent Context</div>
+                                                        {lead.agentName && <div className={`text-[10px] ${ui.heading}`}>Agent: {lead.agentName}</div>}
+                                                        {lead.agentInstructions && (
+                                                            <div className={`text-[10px] ${ui.subtext} italic mt-0.5 mt-0.5 line-clamp-1`}>
+                                                                "{lead.agentInstructions}"
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
 
                         {/* Account Info & Data Settings */}
                         <div className={`rounded-3xl p-6 sm:p-8 ${ui.card}`}>
