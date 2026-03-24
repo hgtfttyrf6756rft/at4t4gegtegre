@@ -371,18 +371,27 @@ export async function handleIncomingMessage(
     const normalizedTo = toNumber.replace(/[^\d+]/g, '');
     console.log(`[phoneAgent] Identifying user for number: ${normalizedTo} (original: ${toNumber})`);
 
-    const usersSnapshot = await db.collection('users')
-        .where('agentPhoneNumber', 'in', [toNumber, normalizedTo])
+    let usersSnapshot = await db.collection('users')
+        .where('agentPhoneNumbersList', 'array-contains-any', [toNumber, normalizedTo])
         .get();
 
     let userDoc = usersSnapshot.empty ? null : usersSnapshot.docs[0];
+
+    if (!userDoc) {
+        // Fallback: search legacy fields
+        usersSnapshot = await db.collection('users')
+            .where('agentPhoneNumber', 'in', [toNumber, normalizedTo])
+            .get();
+        userDoc = usersSnapshot.empty ? null : usersSnapshot.docs[0];
+    }
 
     // Fallback: search all users if exact match fails (handles cases where DB has spaces etc)
     if (!userDoc) {
         const allUsers = await db.collection('users').get();
         userDoc = allUsers.docs.find(u => {
+            const list = u.data().agentPhoneNumbersList || [];
             const num = u.data().agentPhoneNumber;
-            return num && num.replace(/[^\d+]/g, '') === normalizedTo;
+            return list.some((n: string) => n.replace(/[^\d+]/g, '') === normalizedTo) || (num && num.replace(/[^\d+]/g, '') === normalizedTo);
         }) || null;
     }
 
@@ -395,13 +404,16 @@ export async function handleIncomingMessage(
     const uid = userDoc.id;
     console.log(`[phoneAgent] Found user: ${uid} (assigned to ${toNumber})`);
 
-    if (!userData.agentPhoneConfig?.enabled) {
+    // Look up specific config for this number
+    const activeConfig = userData.agentPhoneConfigs?.[toNumber] || userData.agentPhoneConfigs?.[normalizedTo] || userData.agentPhoneConfig;
+
+    if (!activeConfig?.enabled) {
         return { text: "The Phone Agent is currently disabled for this account." };
     }
 
-    const customPrompt = userData.agentPhoneConfig?.systemPrompt || '';
-    const defaultProjectId = userData.agentPhoneConfig?.defaultProjectId || null;
-    const leadCaptureEnabled = !!userData.agentPhoneConfig?.leadCaptureEnabled;
+    const customPrompt = activeConfig?.systemPrompt || '';
+    const defaultProjectId = activeConfig?.defaultProjectId || null;
+    const leadCaptureEnabled = activeConfig?.mode === 'leads' || !!activeConfig?.leadCaptureEnabled;
 
     // 2. Build context based on mode
     let projectListContext = '';
@@ -409,7 +421,7 @@ export async function handleIncomingMessage(
     let activeTools = tools; // Default all tools
     let projectList: { id: string, name: string, description: string }[] = [];
 
-    if (userData.agentPhoneConfig?.mode === 'note') {
+    if (activeConfig?.mode === 'notes' || activeConfig?.mode === 'note') {
         console.log(`[phoneAgent] Note mode conversational reply for user ${uid}. Injecting notes context.`);
         try {
             const notesSnapshot = await db.collection('users').doc(uid).collection('phoneAgentNotes')
@@ -436,7 +448,7 @@ export async function handleIncomingMessage(
         // Restricted Lead Capture Mode: No project access for security
         console.log(`[phoneAgent] Lead Capture mode enabled for user ${uid}. Restricting context and tools.`);
 
-        const leadFields = userData.agentPhoneConfig?.leadFields || [];
+        const leadFields = activeConfig?.leadFields || [];
         const fieldsStr = leadFields.map((f: any) => `${f.name}${f.required ? ' (required)' : ''}`).join(', ');
 
         projectListContext = leadFields.length > 0
@@ -1200,4 +1212,46 @@ export async function buyTwilioNumber(phoneNumber: string, appUrl: string, voice
 
     const data = await response.json();
     return data.phone_number;
+}
+
+export async function getOrCreateVerifyService(friendlyName = 'FreshFront Verify'): Promise<string> {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (!accountSid || !authToken) throw new Error("Missing Twilio credentials in environment");
+
+    const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    const headers = { 'Authorization': `Basic ${auth}` };
+
+    // List existing services to find a match
+    const listUrl = 'https://verify.twilio.com/v2/Services';
+    const listRes = await fetch(listUrl, { headers });
+    if (listRes.ok) {
+        const data = await listRes.json();
+        const existing = data.services?.find((s: any) => s.friendly_name === friendlyName);
+        if (existing) {
+            return existing.sid;
+        }
+    }
+
+    // Create if not found
+    const createUrl = 'https://verify.twilio.com/v2/Services';
+    const body = new URLSearchParams();
+    body.append('FriendlyName', friendlyName);
+
+    const createRes = await fetch(createUrl, {
+        method: 'POST',
+        headers: {
+            ...headers,
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: body.toString()
+    });
+
+    if (!createRes.ok) {
+        const text = await createRes.text();
+        throw new Error(`Twilio Verify API Error: ${text}`);
+    }
+
+    const { sid } = await createRes.json();
+    return sid;
 }
