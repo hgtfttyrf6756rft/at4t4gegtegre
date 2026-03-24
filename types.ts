@@ -43,6 +43,7 @@ export interface PhoneAgentLead {
 
 export interface PhoneAgentConfig {
   enabled: boolean;
+  mode?: 'personal' | 'note';
   welcomeGreeting?: string;
   systemPrompt?: string;
   businessHoursOnly?: boolean;
