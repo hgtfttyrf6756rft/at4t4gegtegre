@@ -981,12 +981,21 @@ CRITICAL INSTRUCTIONS:
                                 }));
 
                                 try {
+                                    const availableNumbers = await phoneAgentService.searchTwilioNumbers();
+                                    if (!availableNumbers || availableNumbers.length === 0) {
+                                        throw new Error("No phone numbers available to purchase at this time.");
+                                    }
+                                    const numberToBuy = availableNumbers[0].phone_number;
+                                    
+                                    // Point webhook to Vercel to buffer Render cold starts
+                                    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://www.freshfront.co';
+                                    
                                     const newTwilioNumber = await phoneAgentService.buyTwilioNumber(
-                                        null,
-                                        DOMAIN ? `https://${DOMAIN}` : `http://localhost:${PORT}`,
-                                        DOMAIN ? `https://${DOMAIN}/twiml` : `http://localhost:${PORT}/twiml`
+                                        numberToBuy,
+                                        appUrl,
+                                        `${appUrl}/api/agent`
                                     );
-                                    console.log(`[WS-Setup] New Number: ${newTwilioNumber}`);
+                                    console.log(`[WS-Setup] New Number Provisioned: ${newTwilioNumber}`);
 
                                     const firestore = initFirebase();
                                     let userRef: FirebaseFirestore.DocumentReference | null = null;
