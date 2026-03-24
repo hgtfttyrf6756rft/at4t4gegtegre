@@ -201,22 +201,36 @@ const server = http.createServer(async (req, res) => {
             let welcomeGreeting = WELCOME_GREETING;
             let voice = 'en-US-Journey-F';
             const ttsProvider = 'Google';
+            let isNoteMode = false;
 
             try {
                 const userData = await getUserConfig(to);
                 if (userData?.agentPhoneConfig?.enabled) {
+                    isNoteMode = userData.agentPhoneConfig.mode === 'note';
                     if (userData.agentPhoneConfig.welcomeGreeting) {
                         welcomeGreeting = userData.agentPhoneConfig.welcomeGreeting;
                     }
                     // Resolve voice using voiceName (Gemini Chirp3 HD) or voiceGender fallback
                     voice = resolveVoice(userData.agentPhoneConfig);
-                    console.log(`[TwiML] Resolved voice: ${voice} (voiceName=${userData.agentPhoneConfig.voiceName}, voiceGender=${userData.agentPhoneConfig.voiceGender})`);
+                    console.log(`[TwiML] Resolved voice: ${voice} (mode=${userData.agentPhoneConfig.mode}, voiceName=${userData.agentPhoneConfig.voiceName})`);
                 }
             } catch (e) {
                 console.error('[TwiML] Error fetching user config:', e);
             }
 
-            console.log(`[TwiML] Responding in ${Date.now() - startTime}ms`);
+            console.log(`[TwiML] Responding in ${Date.now() - startTime}ms (noteMode=${isNoteMode})`);
+
+            // Note Mode: redirect to dedicated note handler
+            if (isNoteMode) {
+                const noteTwimlUrl = DOMAIN ? `https://${DOMAIN}/twiml-note` : `http://localhost:${PORT}/twiml-note`;
+                const xmlRedirect = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Redirect method="POST">${noteTwimlUrl}</Redirect>
+</Response>`;
+                res.writeHead(200, { 'Content-Type': 'text/xml' });
+                res.end(xmlRedirect);
+                return;
+            }
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
@@ -235,7 +249,62 @@ const server = http.createServer(async (req, res) => {
             res.writeHead(200, { 'Content-Type': 'text/xml' });
             res.end(xmlResponse);
         });
-    } else {
+    }
+
+    // GET /twiml-note — probe endpoint
+    if (req.method === 'GET' && req.url === '/twiml-note') {
+        res.writeHead(200, { 'Content-Type': 'text/xml' });
+        res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Note Mode voice server is running.</Say></Response>`);
+        return;
+    }
+
+    // POST /twiml-note — Note Mode voice handler
+    if (req.method === 'POST' && req.url === '/twiml-note') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', async () => {
+            const postData = querystring.parse(body);
+            const to = postData.To as string || '';
+            const from = postData.From as string || '';
+
+            const WS_NOTE_URL = DOMAIN ? `wss://${DOMAIN}/ws-note` : `ws://localhost:${PORT}/ws-note`;
+
+            let welcomeGreeting = 'Hello! How can I help you today? You can ask me about anything you have noted down.';
+            let voice = 'en-US-Journey-F';
+
+            try {
+                const userData = await getUserConfig(to);
+                if (userData?.agentPhoneConfig?.enabled) {
+                    if (userData.agentPhoneConfig.welcomeGreeting) {
+                        welcomeGreeting = userData.agentPhoneConfig.welcomeGreeting;
+                    }
+                    voice = resolveVoice(userData.agentPhoneConfig);
+                }
+            } catch (e) {
+                console.error('[TwiML-Note] Error fetching user config:', e);
+            }
+
+            const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <ConversationRelay 
+            url="${WS_NOTE_URL}" 
+            welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
+            ttsProvider="Google"
+            voice="${voice}"
+        >
+            <Parameter name="to" value="${escapeXmlAttr(to)}" />
+            <Parameter name="from" value="${escapeXmlAttr(from)}" />
+        </ConversationRelay>
+    </Connect>
+</Response>`;
+            res.writeHead(200, { 'Content-Type': 'text/xml' });
+            res.end(xmlResponse);
+        });
+        return;
+    }
+
+    if (true) { // placeholder to maintain structure
         res.writeHead(404);
         res.end('Not Found');
     }
@@ -431,6 +500,122 @@ wss.on('connection', (ws: WebSocket) => {
         if (callSid && sessions[callSid]) {
             delete sessions[callSid];
         }
+    });
+});
+
+// ─── Note Mode WebSocket (/ws-note) — Gemini Live API Bridge ─────────────────
+// This handler is used when the user has configured their phone agent in Note Mode.
+// Their SMS notes are fetched from Firestore and injected as RAG context into the
+// Gemini Live API session for real-time voice Q&A.
+const wssNote = new WebSocketServer({ server, path: '/ws-note' });
+
+wssNote.on('connection', (ws: WebSocket) => {
+    let callSid: string | null = null;
+
+    ws.on('message', async (message: string) => {
+        try {
+            const data = JSON.parse(message);
+
+            if (data.type === 'setup') {
+                callSid = data.callSid;
+                const to = data.customParameters?.to || '';
+                const from = data.customParameters?.from || '';
+                console.log(`[WS-Note] Setup for call: ${callSid} (To: ${to}, From: ${from})`);
+
+                // Fetch all SMS notes for this user from Firestore
+                let notesContext = 'The user has not sent any notes yet.';
+                let customSystemPrompt = '';
+                let notesCount = 0;
+                const firestore = initFirebase();
+                if (firestore) {
+                    try {
+                        // Find user by phone number
+                        const userSnap = await firestore.collection('users')
+                            .where('agentPhoneNumber', '==', to)
+                            .limit(1).get();
+                        if (!userSnap.empty) {
+                            const userDoc = userSnap.docs[0];
+                            const uid = userDoc.id;
+                            const config = userDoc.data()?.agentPhoneConfig;
+                            customSystemPrompt = config?.systemPrompt || '';
+
+                            // Fetch all notes
+                            const notesSnap = await firestore.collection('users').doc(uid)
+                                .collection('phoneAgentNotes')
+                                .orderBy('timestamp', 'desc')
+                                .limit(200)
+                                .get();
+
+                            notesCount = notesSnap.size;
+
+                            if (!notesSnap.empty) {
+                                const notesList = notesSnap.docs.map(d => {
+                                    const n = d.data();
+                                    const date = new Date(n.timestamp).toLocaleString();
+                                    return `[${date}] ${n.body}`;
+                                });
+                                notesContext = notesList.join('\n');
+                                console.log(`[WS-Note] Loaded ${notesList.length} notes for user ${uid}`);
+                            } else {
+                                console.log(`[WS-Note] No notes yet for user ${uid}`);
+                            }
+                        } else {
+                            console.warn(`[WS-Note] No user found for phone number: ${to}`);
+                        }
+                    } catch (err) {
+                        console.error('[WS-Note] Error fetching notes:', err);
+                    }
+                }
+
+                // Build the system instruction with note RAG context
+                const noteSystemPrompt = [
+                    `You are a personal voice assistant with access to the user's notes. These notes were sent as SMS text messages to this number.`,
+                    `You MUST answer questions based on the content of these notes.`,
+                    `This is a live phone call, so be concise and speak naturally. Do not use markdown, bullet points, asterisks, or emojis.`,
+                    customSystemPrompt ? `\nAdditional instructions: ${customSystemPrompt}` : '',
+                    `\n\n--- USER'S NOTES (${notesCount} total) ---\n${notesContext}\n--- END OF NOTES ---`
+                ].filter(Boolean).join('\n');
+
+                // Store the system prompt on the WebSocket connection for use in prompt handling
+                (ws as any).__noteSystemPrompt = noteSystemPrompt;
+                console.log(`[WS-Note] System prompt ready (${noteSystemPrompt.length} chars)`);
+
+            } else if (data.type === 'prompt') {
+                const userPrompt = data.voicePrompt || data.textPrompt || '';
+                const systemPrompt = (ws as any).__noteSystemPrompt || '';
+                console.log(`[WS-Note] User (${callSid}): ${userPrompt}`);
+
+                try {
+                    // Use generateContent (single-turn) since Twilio ConversationRelay
+                    // manages the audio loop — we just respond with text each turn
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash',
+                        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+                        config: { systemInstruction: systemPrompt }
+                    });
+
+                    const responseText = response.candidates?.[0]?.content?.parts
+                        ?.filter((p: any) => p.text)
+                        .map((p: any) => p.text)
+                        .join('') || "I couldn't find an answer in your notes.";
+
+                    ws.send(JSON.stringify({ type: 'text', token: responseText, last: true }));
+                    console.log(`[WS-Note] Gemini (${callSid}): ${responseText.substring(0, 80)}...`);
+                } catch (apiError) {
+                    console.error(`[WS-Note] Gemini API Error for ${callSid}:`, apiError);
+                    ws.send(JSON.stringify({ type: 'text', token: "I'm sorry, I had trouble looking up your notes.", last: true }));
+                }
+
+            } else if (data.type === 'interrupt') {
+                console.log(`[WS-Note] Interruption for call ${callSid}`);
+            }
+        } catch (e) {
+            console.error('[WS-Note] Error:', e);
+        }
+    });
+
+    ws.on('close', () => {
+        console.log(`[WS-Note] Closed for call: ${callSid}`);
     });
 });
 
