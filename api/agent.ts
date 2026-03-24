@@ -401,7 +401,7 @@ export default {
                     redirectUrl = redirectUrl.replace(/\/+$/, '') + '/twiml';
                 }
                 const twiml = redirectUrl
-                    ? `<?xml version="1.0" encoding="UTF-8"?>\n<Response><Redirect method="POST">${redirectUrl}</Redirect></Response>`
+                    ? `<?xml version="1.0" encoding="UTF-8"?>\n<Response><Say>Connecting you to your agent, please wait a moment.</Say><Redirect method="POST">${redirectUrl}</Redirect></Response>`
                     : `<?xml version="1.0" encoding="UTF-8"?>\n<Response><Say>Voice agent is not configured. Please set VOICE_SERVER_URL.</Say></Response>`;
                 console.log(`[twilio-webhook] Redirecting voice call to: ${redirectUrl || 'N/A'}`);
                 return new Response(twiml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
