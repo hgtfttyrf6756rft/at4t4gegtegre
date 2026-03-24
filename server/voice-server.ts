@@ -292,7 +292,6 @@ async function sendSms(to: string, from: string, body: string): Promise<void> {
     if (!accountSid || !authToken) { console.warn('[SMS] Missing Twilio credentials'); return; }
     const authStr = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
     const params = new URLSearchParams();
-    params.append('To', to);
     params.append('From', from);
     params.append('Body', body);
     try {
@@ -307,21 +306,29 @@ async function sendSms(to: string, from: string, body: string): Promise<void> {
 }
 
 const server = http.createServer(async (req, res) => {
+    // Safely parse URL to ignore query strings added by Twilio
+    const parsedUrl = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+    let pathname = parsedUrl.pathname;
+    // Remove trailing slash if present (except for root)
+    if (pathname !== '/' && pathname.endsWith('/')) {
+        pathname = pathname.substring(0, pathname.length - 1);
+    }
+
     // Health check endpoint — allows Render/UptimeRobot to keep the server awake
-    if (req.method === 'GET' && (req.url === '/health' || req.url === '/')) {
+    if (req.method === 'GET' && (pathname === '/health' || pathname === '/')) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), wsUrl: WS_URL_FOR_HEALTH }));
         return;
     }
 
     // GET /twiml — for health probe / browser test
-    if (req.method === 'GET' && req.url === '/twiml') {
+    if (req.method === 'GET' && pathname === '/twiml') {
         res.writeHead(200, { 'Content-Type': 'text/xml' });
         res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Voice server is running.</Say></Response>`);
         return;
     }
 
-    if (req.method === 'POST' && req.url === '/twiml') {
+    if (req.method === 'POST' && pathname === '/twiml') {
         let body = '';
         req.on('data', chunk => { body += chunk.toString(); });
         req.on('end', async () => {
@@ -343,10 +350,11 @@ const server = http.createServer(async (req, res) => {
                 const activeConfig = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
                 
                 if (activeConfig?.enabled) {
-                    isNoteMode = activeConfig.mode === 'note' || activeConfig.mode === 'notes';
-                    if (activeConfig.welcomeGreeting) {
-                        welcomeGreeting = activeConfig.welcomeGreeting;
-                    }
+                    isNoteMode = activeConfig.mode === 'notes' || activeConfig.mode === 'note';
+                    welcomeGreeting = activeConfig.systemPrompt 
+                        ? (activeConfig.welcomeGreeting || "Hi, I'm your AI assistant. How can I help you today?")
+                        : welcomeGreeting;
+
                     // Resolve voice using voiceName (Gemini Chirp3 HD) or voiceGender fallback
                     voice = resolveVoice(activeConfig);
                     console.log(`[TwiML] Resolved voice: ${voice} (mode=${activeConfig.mode}, voiceName=${activeConfig.voiceName})`);
@@ -402,14 +410,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /twiml-note — probe endpoint
-    if (req.method === 'GET' && req.url === '/twiml-note') {
+    if (req.method === 'GET' && pathname === '/twiml-note') {
         res.writeHead(200, { 'Content-Type': 'text/xml' });
         res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Note Mode voice server is running.</Say></Response>`);
         return;
     }
 
     // POST /twiml-note — Note Mode voice handler
-    if (req.method === 'POST' && req.url === '/twiml-note') {
+    if (req.method === 'POST' && pathname === '/twiml-note') {
         let body = '';
         req.on('data', chunk => { body += chunk.toString(); });
         req.on('end', async () => {
@@ -428,9 +436,9 @@ const server = http.createServer(async (req, res) => {
                 const activeConfig = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
                 
                 if (activeConfig?.enabled) {
-                    if (activeConfig.welcomeGreeting) {
-                        welcomeGreeting = activeConfig.welcomeGreeting;
-                    }
+                    welcomeGreeting = activeConfig.systemPrompt 
+                        ? (activeConfig.welcomeGreeting || welcomeGreeting)
+                        : welcomeGreeting;
                     voice = resolveVoice(activeConfig);
                 }
             } catch (e) {
@@ -457,14 +465,23 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // GET /twiml-setup — probe endpoint
+    if (req.method === 'GET' && pathname === '/twiml-setup') {
+        res.writeHead(200, { 'Content-Type': 'text/xml' });
+        res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Setup Mode voice server is running.</Say></Response>`);
+        return;
+    }
+
     // POST /twiml-setup — Setup Mode voice handler
-    if (req.method === 'POST' && req.url === '/twiml-setup') {
+    if (req.method === 'POST' && pathname === '/twiml-setup') {
         let body = '';
         req.on('data', chunk => { body += chunk.toString(); });
         req.on('end', async () => {
             const postData = querystring.parse(body);
             const to = postData.To as string || '';
             const from = postData.From as string || '';
+            
+            console.log(`[TwiML-Setup] Received redirect for call to ${to} from ${from}`);
 
             const WS_SETUP_URL = DOMAIN ? `wss://${DOMAIN}/ws-setup` : `ws://localhost:${PORT}/ws-setup`;
 
@@ -489,14 +506,14 @@ const server = http.createServer(async (req, res) => {
     }
 
     // GET /twiml-projects — health probe
-    if (req.method === 'GET' && req.url === '/twiml-projects') {
+    if (req.method === 'GET' && pathname === '/twiml-projects') {
         res.writeHead(200, { 'Content-Type': 'text/xml' });
         res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Projects mode is running.</Say></Response>`);
         return;
     }
 
     // POST /twiml-projects — Project Management voice handler for linked callers
-    if (req.method === 'POST' && req.url === '/twiml-projects') {
+    if (req.method === 'POST' && pathname === '/twiml-projects') {
         let body = '';
         req.on('data', chunk => { body += chunk.toString(); });
         req.on('end', async () => {
@@ -525,7 +542,8 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    if (true) { // placeholder to maintain structure
+    if (true) {
+        console.warn(`[HTTP] 404 Not Found: ${req.method} ${req.url}`);
         res.writeHead(404);
         res.end('Not Found');
     }
