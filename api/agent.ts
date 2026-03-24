@@ -414,16 +414,29 @@ export default {
                 if (mediaUrl) incomingMediaUrls.push(mediaUrl);
             }
 
-            // 4. Handle Twilio Error/Alert Webhooks (which contain ErrorCode instead of To/From)
-            const errCode = formData.get('ErrorCode')?.toString();
-            const msgBody = formData.get('Msg')?.toString();
-            if (errCode || msgBody) {
-                console.log(`[twilio-webhook] Received System/Error Webhook: ${errCode || 'N/A'} - ${msgBody || 'N/A'}`);
-                return new Response('OK', { status: 200 });
+            // 4. Handle Twilio Error/Alert Webhooks
+            const level = formData.get('Level')?.toString();
+            const payloadStr = formData.get('Payload')?.toString();
+            
+            if (level || payloadStr) {
+                try {
+                    let errCode = formData.get('ErrorCode')?.toString();
+                    let msgBody = formData.get('Msg')?.toString();
+                    
+                    if (payloadStr) {
+                        const parsed = JSON.parse(payloadStr);
+                        errCode = errCode || parsed.ErrorCode;
+                        msgBody = msgBody || parsed.Msg;
+                    }
+                    console.log(`[twilio-webhook] Received System/Error Webhook: ${errCode || 'N/A'} - ${msgBody || 'N/A'}`);
+                    return new Response('OK', { status: 200 });
+                } catch (e) {
+                    console.error('[twilio-webhook] Failed to parse Error webhook payload', e);
+                }
             }
 
             if (!to || (!bodyStr && numMedia === 0)) {
-                console.warn('[twilio-webhook] Missing To or Body/Media');
+                console.warn(`[twilio-webhook] Missing To or Body/Media (Form Keys: ${Array.from(formData.keys()).join(', ')})`);
                 return new Response('Missing To or Body', { status: 400 });
             }
 
