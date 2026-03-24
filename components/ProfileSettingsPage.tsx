@@ -544,11 +544,28 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                                     ...prev,
                                                     agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), welcomeGreeting: e.target.value }
                                                 }))}
-                                                placeholder="The very first thing the AI says when someone calls (e.g., 'Hello, thanks for calling Acme Corp! How can I help?')."
+                                                placeholder={profile.agentPhoneConfig?.mode === 'note' ? "e.g. Note agent is active. What would you like to know?" : "e.g. Hello! Welcome to my AI assistant. How can I help you today?"}
                                                 className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all resize-none ${ui.input}`}
                                             />
                                             <p className={`mt-2 text-[10px] ${ui.subtext}`}>This is played immediately by Twilio before the AI starts processing speech.</p>
                                         </div>
+
+                                        {profile.agentPhoneConfig?.mode === 'note' && (
+                                            <div className="pt-2">
+                                                <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Trainer Numbers (Comma separated)</label>
+                                                <input
+                                                    type="text"
+                                                    value={profile.agentPhoneConfig?.trainerNumbers || ''}
+                                                    onChange={e => setProfile(prev => ({
+                                                        ...prev,
+                                                        agentPhoneConfig: { ...(prev.agentPhoneConfig || { enabled: true }), trainerNumbers: e.target.value }
+                                                    }))}
+                                                    placeholder="e.g. +1234567890, +1987654321"
+                                                    className={`w-full px-4 py-2.5 rounded-xl border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`}
+                                                />
+                                                <p className={`mt-2 text-[10px] ${ui.subtext}`}>Only these trusted numbers can save notes via SMS. Others will receive normal AI replies based on the notes.</p>
+                                            </div>
+                                        )}
 
                                         <div className="pt-2">
                                             <div className="flex items-center justify-between mb-2">
