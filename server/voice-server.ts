@@ -473,7 +473,7 @@ const server = http.createServer(async (req, res) => {
     <Connect>
         <ConversationRelay 
             url="${WS_SETUP_URL}" 
-            welcomeGreeting="Welcome to the Freshfront Agent Setup line! I'm here to help you configure a new AI phone agent to handle your incoming leads. What's the name of your business?"
+            welcomeGreeting="Welcome to Freshfront! Please wait while I connect you to our agent setup assistant."
             ttsProvider="Google"
             voice="en-US-Journey-F"
         >
