@@ -44,6 +44,7 @@ export interface PhoneAgentLead {
 export interface PhoneAgentConfig {
   enabled: boolean;
   mode?: 'personal' | 'note';
+  trainerNumbers?: string;
   welcomeGreeting?: string;
   systemPrompt?: string;
   businessHoursOnly?: boolean;
