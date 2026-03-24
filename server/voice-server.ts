@@ -152,6 +152,82 @@ const provisionLeadAgentTool = {
     ]
 };
 
+// Project management tools for linked account callers
+const projectManagementTools = {
+    functionDeclarations: [
+        {
+            name: "listProjects",
+            description: "Returns the names and IDs of the user's projects so the user can choose one.",
+            parameters: { type: Type.OBJECT, properties: {} }
+        },
+        {
+            name: "createProject",
+            description: "Creates a brand new project with a name and optional description.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    name: { type: Type.STRING, description: "Project name" },
+                    description: { type: Type.STRING, description: "Short project description" }
+                },
+                required: ["name"]
+            }
+        },
+        {
+            name: "addNote",
+            description: "Adds a note to an existing project.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    projectId: { type: Type.STRING, description: "The project ID" },
+                    title: { type: Type.STRING, description: "Short title for the note" },
+                    content: { type: Type.STRING, description: "Full content of the note" }
+                },
+                required: ["projectId", "title", "content"]
+            }
+        },
+        {
+            name: "addTask",
+            description: "Adds a task to an existing project.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    projectId: { type: Type.STRING, description: "The project ID" },
+                    title: { type: Type.STRING, description: "Task title" },
+                    description: { type: Type.STRING, description: "Optional task description" },
+                    priority: { type: Type.STRING, description: "Priority: low, medium, or high" }
+                },
+                required: ["projectId", "title", "priority"]
+            }
+        },
+        {
+            name: "addCalendarEvent",
+            description: "Adds a calendar event to an existing project.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    projectId: { type: Type.STRING, description: "The project ID" },
+                    title: { type: Type.STRING, description: "Event title" },
+                    date: { type: Type.STRING, description: "Event date as ISO string or natural language like 'next Friday'" },
+                    description: { type: Type.STRING, description: "Optional event description" }
+                },
+                required: ["projectId", "title", "date"]
+            }
+        },
+        {
+            name: "generateImage",
+            description: "Generates an AI image for a project and saves it.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    projectId: { type: Type.STRING, description: "The project ID" },
+                    prompt: { type: Type.STRING, description: "Detailed image description" }
+                },
+                required: ["projectId", "prompt"]
+            }
+        }
+    ]
+};
+
 // Store active chat sessions
 const sessions: { [callSid: string]: { contents: any[], uid?: string, agentName?: string, agentInstructions?: string, systemPrompt?: string } } = {};
 
@@ -203,6 +279,28 @@ async function getUserConfig(phoneNumber: string): Promise<any> {
 }
 
 // ─── HTTP Server ──────────────────────────────────────────────────────────────
+
+// Helper: send an SMS via Twilio REST API
+async function sendSms(to: string, from: string, body: string): Promise<void> {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (!accountSid || !authToken) { console.warn('[SMS] Missing Twilio credentials'); return; }
+    const authStr = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    const params = new URLSearchParams();
+    params.append('To', to);
+    params.append('From', from);
+    params.append('Body', body);
+    try {
+        const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`, {
+            method: 'POST',
+            headers: { 'Authorization': `Basic ${authStr}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString()
+        });
+        if (!res.ok) console.error('[SMS] Failed:', await res.text());
+        else console.log(`[SMS] Sent to ${to}`);
+    } catch (e) { console.error('[SMS] Error:', e); }
+}
+
 const server = http.createServer(async (req, res) => {
     // Health check endpoint — allows Render/UptimeRobot to keep the server awake
     if (req.method === 'GET' && (req.url === '/health' || req.url === '/')) {
@@ -266,12 +364,29 @@ const server = http.createServer(async (req, res) => {
                 return;
             }
 
-            // Setup Mode Trigger
+            // Check if caller's personal number is linked to an account → route to project manager
             if (to === '+16474904049') {
-                const setupTwimlUrl = DOMAIN ? `https://${DOMAIN}/twiml-setup` : `http://localhost:${PORT}/twiml-setup`;
+                const firestore = initFirebase();
+                let isLinkedCaller = false;
+                if (firestore) {
+                    try {
+                        const normalizedFrom = normalizePhoneNumber(from);
+                        const noPlusFrom = normalizedFrom.startsWith('+') ? normalizedFrom.substring(1) : normalizedFrom;
+                        const searchValues = [...new Set([from, normalizedFrom, noPlusFrom, `+${noPlusFrom}`])].slice(0, 4);
+                        const snap = await firestore.collection('users').where('personalPhoneNumber', 'in', searchValues).limit(1).get();
+                        isLinkedCaller = !snap.empty;
+                    } catch (e) {
+                        console.error('[TwiML] Error checking personalPhoneNumber:', e);
+                    }
+                }
+
+                const targetUrl = isLinkedCaller
+                    ? (DOMAIN ? `https://${DOMAIN}/twiml-projects` : `http://localhost:${PORT}/twiml-projects`)
+                    : (DOMAIN ? `https://${DOMAIN}/twiml-setup` : `http://localhost:${PORT}/twiml-setup`);
+
                 const xmlRedirect = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Redirect method="POST">${setupTwimlUrl}</Redirect>
+    <Redirect method="POST">${targetUrl}</Redirect>
 </Response>`;
                 res.writeHead(200, { 'Content-Type': 'text/xml' });
                 res.end(xmlRedirect);
@@ -385,11 +500,54 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // GET /twiml-projects — health probe
+    if (req.method === 'GET' && req.url === '/twiml-projects') {
+        res.writeHead(200, { 'Content-Type': 'text/xml' });
+        res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Projects mode is running.</Say></Response>`);
+        return;
+    }
+
+    // POST /twiml-projects — Project Management voice handler for linked callers
+    if (req.method === 'POST' && req.url === '/twiml-projects') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', async () => {
+            const postData = querystring.parse(body);
+            const to = postData.To as string || '';
+            const from = postData.From as string || '';
+            const WS_PROJECTS_URL = DOMAIN ? `wss://${DOMAIN}/ws-projects` : `ws://localhost:${PORT}/ws-projects`;
+
+            const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <ConversationRelay
+            url="${WS_PROJECTS_URL}"
+            welcomeGreeting="Hey! Welcome back. You can create projects, add notes, tasks, calendar events, or generate images. What would you like to do?"
+            ttsProvider="Google"
+            voice="en-US-Journey-F"
+        >
+            <Parameter name="to" value="${escapeXmlAttr(to)}" />
+            <Parameter name="from" value="${escapeXmlAttr(from)}" />
+        </ConversationRelay>
+    </Connect>
+</Response>`;
+            res.writeHead(200, { 'Content-Type': 'text/xml' });
+            res.end(xmlResponse);
+        });
+        return;
+    }
+
     if (true) { // placeholder to maintain structure
         res.writeHead(404);
         res.end('Not Found');
     }
 });
+
+
+// GET /twiml-projects — health probe
+// POST /twiml-projects — handled inside createServer above.
+// (These routes are injected into the existing server handler. The standalone function below is a placeholder.)
+
 
 // ─── WebSocket Server ─────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server, path: '/ws' });
@@ -938,6 +1096,284 @@ CRITICAL INSTRUCTIONS:
         if (callSid && sessions[callSid]) {
             delete sessions[callSid];
         }
+    });
+});
+
+// ─── Projects Mode WebSocket (/ws-projects) ──────────────────────────────────
+// Handles linked account callers who want to manage their Freshfront projects.
+const wssProjects = new WebSocketServer({ server, path: '/ws-projects' });
+
+wssProjects.on('connection', (ws: WebSocket) => {
+    let callSid: string | null = null;
+    let callerNumber: string = '';
+    let callerUid: string = '';
+    let callerName: string = 'there';
+    // Cache project names/IDs for this session
+    let projectsCache: Array<{ id: string; name: string }> = [];
+
+    ws.on('message', async (message: string) => {
+        try {
+            const data = JSON.parse(message);
+
+            if (data.type === 'setup') {
+                callSid = data.callSid;
+                const to = data.customParameters?.to || '';
+                callerNumber = data.customParameters?.from || '';
+
+                console.log(`[WS-Projects] Setup for call: ${callSid} (From: ${callerNumber})`);
+
+                const firestore = initFirebase();
+                let projectListContext = 'You have no projects yet.';
+
+                if (firestore) {
+                    try {
+                        const normalizedFrom = normalizePhoneNumber(callerNumber);
+                        const noPlusFrom = normalizedFrom.startsWith('+') ? normalizedFrom.substring(1) : normalizedFrom;
+                        const searchValues = [...new Set([callerNumber, normalizedFrom, noPlusFrom, `+${noPlusFrom}`])].slice(0, 4);
+                        const userSnap = await firestore.collection('users')
+                            .where('personalPhoneNumber', 'in', searchValues).limit(1).get();
+
+                        if (!userSnap.empty) {
+                            const userDoc = userSnap.docs[0];
+                            callerUid = userDoc.id;
+                            const userData = userDoc.data();
+                            callerName = userData.displayName || userData.firstName || 'there';
+
+                            // Load user's projects
+                            const projectsSnap = await firestore.collection('users').doc(callerUid)
+                                .collection('projects').orderBy('lastModified', 'desc').limit(15).get();
+
+                            projectsCache = projectsSnap.docs.map(d => ({ id: d.id, name: d.data().name || 'Untitled' }));
+
+                            projectListContext = projectsCache.length > 0
+                                ? projectsCache.map((p, i) => `${i + 1}. "${p.name}" (ID: ${p.id})`).join('\n')
+                                : 'You have no projects yet.';
+
+                            console.log(`[WS-Projects] Loaded ${projectsCache.length} projects for user ${callerUid}`);
+                        } else {
+                            console.warn(`[WS-Projects] No linked account found for ${callerNumber}`);
+                        }
+                    } catch (e) {
+                        console.error('[WS-Projects] Firestore error during setup:', e);
+                    }
+                }
+
+                const systemPrompt = `You are a Freshfront voice project assistant. The user's name is ${callerName}.
+You help them manage their projects hands-free via a phone call.
+
+CRITICAL VOICE RULES:
+- You are on a phone call. Be concise, natural and conversational.
+- Never use markdown syntax (asterisks, bullet points, hash symbols).
+- Always confirm clearly after performing any action.
+- When the user asks to add something, confirm which project they mean if ambiguous.
+- Project IDs should NEVER be read aloud. Only refer to projects by name.
+
+CURRENT DATE: ${new Date().toDateString()}
+
+USER'S PROJECTS:
+${projectListContext}
+
+CAPABILITIES:
+- Create a new project (call createProject)
+- Add a note to a project (call addNote)
+- Add a task to a project (call addTask)
+- Add a calendar event to a project (call addCalendarEvent)
+- Generate an AI image for a project (call generateImage)
+- List their current projects (call listProjects)
+
+When calling addTask, the priority MUST be one of: low, medium, high.
+After each successful action, confirm it was saved and mention that an SMS confirmation was sent.`;
+
+                sessions[callSid!] = { contents: [], systemPrompt, uid: callerUid };
+
+            } else if (data.type === 'prompt') {
+                if (!callSid || !sessions[callSid]) return;
+
+                const userPrompt = data.voicePrompt || data.textPrompt;
+                const session = sessions[callSid];
+                console.log(`[WS-Projects] User (${callSid}): ${userPrompt}`);
+
+                session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
+
+                try {
+                    const firestore = initFirebase();
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash',
+                        contents: session.contents,
+                        config: {
+                            systemInstruction: session.systemPrompt,
+                            tools: callerUid ? [projectManagementTools] : []
+                        }
+                    });
+
+                    if (response.candidates?.[0]?.content) {
+                        session.contents.push(response.candidates[0].content);
+                    }
+
+                    let responseText = '';
+                    const parts = response.candidates?.[0]?.content?.parts || [];
+
+                    for (const part of parts) {
+                        if (part.text) responseText += part.text;
+
+                        if (part.functionCall && firestore && callerUid) {
+                            const call = part.functionCall;
+                            let toolResult: any = { success: false };
+                            let smsBody = '';
+
+                            try {
+                                if (call.name === 'listProjects') {
+                                    const snap = await firestore.collection('users').doc(callerUid)
+                                        .collection('projects').orderBy('lastModified', 'desc').limit(15).get();
+                                    projectsCache = snap.docs.map(d => ({ id: d.id, name: d.data().name || 'Untitled' }));
+                                    const list = projectsCache.map((p, i) => `${i + 1}. ${p.name}`).join(', ');
+                                    toolResult = { success: true, projects: projectsCache.map(p => p.name), summary: list };
+
+                                } else if (call.name === 'createProject') {
+                                    const { name, description } = call.args as any;
+                                    const now = Date.now();
+                                    const newId = `${now}-${Math.random().toString(36).slice(2, 8)}`;
+                                    const newProject = {
+                                        id: newId, name, description: description || '', createdAt: now,
+                                        lastModified: now, researchSessions: [], draftResearchSessions: [],
+                                        tasks: [], notes: [], knowledgeBase: [], aiInsights: [],
+                                        projectConversations: [], newsArticles: [], pinnedAssetIds: [],
+                                        ownerUid: callerUid
+                                    };
+                                    await firestore.collection('users').doc(callerUid)
+                                        .collection('projects').doc(newId).set(newProject);
+                                    projectsCache.unshift({ id: newId, name });
+                                    toolResult = { success: true, projectId: newId, name };
+                                    smsBody = `✅ Project created: "${name}"\nView it at freshfront.co/projects`;
+
+                                } else if (call.name === 'addNote') {
+                                    const { projectId, title, content } = call.args as any;
+                                    const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
+                                    const noteId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                                    const note = {
+                                        id: noteId, title, content, color: null, pinned: false,
+                                        aiGenerated: false, aiSuggestions: [], tags: [],
+                                        linkedResearchId: null, createdAt: Date.now(), lastModified: Date.now()
+                                    };
+                                    await firestore.collection('users').doc(callerUid)
+                                        .collection('projects').doc(projectId)
+                                        .update({ notes: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(note) });
+                                    toolResult = { success: true, noteId, projectId };
+                                    smsBody = `📝 Note added to "${projectName}":\n"${title}" — ${content.substring(0, 80)}${content.length > 80 ? '...' : ''}`;
+
+                                } else if (call.name === 'addTask') {
+                                    const { projectId, title, description: desc, priority } = call.args as any;
+                                    const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
+                                    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                                    const task = {
+                                        id: taskId, title, description: desc || '', status: 'todo',
+                                        priority: (['low', 'medium', 'high'].includes(priority) ? priority : 'medium'),
+                                        order: 0, createdAt: Date.now(), lastModified: Date.now(),
+                                        aiGenerated: false, tags: []
+                                    };
+                                    await firestore.collection('users').doc(callerUid)
+                                        .collection('projects').doc(projectId)
+                                        .update({ tasks: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(task) });
+                                    toolResult = { success: true, taskId, projectId };
+                                    smsBody = `✅ Task added to "${projectName}":\n"${title}" (${task.priority} priority)`;
+
+                                } else if (call.name === 'addCalendarEvent') {
+                                    const { projectId, title, date, description: desc } = call.args as any;
+                                    const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
+                                    const eventId = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                                    // Parse date string to timestamp (best-effort)
+                                    let dateTs: number;
+                                    try { dateTs = new Date(date).getTime() || Date.now(); } catch { dateTs = Date.now(); }
+                                    const event = {
+                                        id: eventId, title, date: dateTs, description: desc || '',
+                                        createdAt: Date.now(), source: 'voice'
+                                    };
+                                    await firestore.collection('users').doc(callerUid)
+                                        .collection('projects').doc(projectId)
+                                        .update({ calendarEvents: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(event) });
+                                    toolResult = { success: true, eventId, projectId };
+                                    const dateStr = new Date(dateTs).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+                                    smsBody = `📅 Event added to "${projectName}":\n"${title}" on ${dateStr}`;
+
+                                } else if (call.name === 'generateImage') {
+                                    const { projectId, prompt } = call.args as any;
+                                    const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
+                                    // Queue via Gemini image generation (Imagen 3)
+                                    try {
+                                        const imgResp = await ai.models.generateImages({
+                                            model: 'imagen-3.0-generate-002',
+                                            prompt,
+                                            config: { numberOfImages: 1, aspectRatio: '16:9' }
+                                        });
+                                        const imgBytes = imgResp.generatedImages?.[0]?.image?.imageBytes;
+                                        if (imgBytes) {
+                                            // Store as base64 data URI in project's generatedImages array
+                                            const dataUri = `data:image/png;base64,${imgBytes}`;
+                                            const imageAsset = {
+                                                id: `img-${Date.now()}`, prompt, url: dataUri,
+                                                createdAt: Date.now(), source: 'voice', type: 'image/png'
+                                            };
+                                            await firestore.collection('users').doc(callerUid)
+                                                .collection('projects').doc(projectId)
+                                                .update({ generatedImages: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(imageAsset) });
+                                            toolResult = { success: true, projectId, prompt };
+                                            smsBody = `🎨 Image generated for "${projectName}"!\nPrompt: "${prompt.substring(0, 60)}${prompt.length > 60 ? '...' : ''}"\nView it in the Assets tab.`;
+                                        }
+                                    } catch (imgErr) {
+                                        console.error('[WS-Projects] Image generation failed:', imgErr);
+                                        toolResult = { success: false, error: 'Image generation failed' };
+                                    }
+                                }
+                            } catch (toolErr: any) {
+                                console.error(`[WS-Projects] Tool ${call.name} error:`, toolErr);
+                                toolResult = { success: false, error: toolErr.message };
+                            }
+
+                            // Send SMS confirmation
+                            if (smsBody && callerNumber) {
+                                const smsFrom = '+16474904049';
+                                sendSms(callerNumber, smsFrom, smsBody).catch(e => console.error('[WS-Projects] SMS error:', e));
+                            }
+
+                            // Push function result back and get follow-up response
+                            session.contents.push({
+                                role: 'user',
+                                parts: [{ functionResponse: { name: call.name, response: toolResult } }]
+                            });
+
+                            const followup = await ai.models.generateContent({
+                                model: 'gemini-2.0-flash',
+                                contents: session.contents,
+                                config: { systemInstruction: session.systemPrompt, tools: [projectManagementTools] }
+                            });
+
+                            if (followup.candidates?.[0]?.content) {
+                                session.contents.push(followup.candidates[0].content);
+                                const txt = followup.candidates[0].content.parts?.find((p: any) => p.text)?.text || '';
+                                if (txt) responseText = txt;
+                            }
+                        }
+                    }
+
+                    ws.send(JSON.stringify({ type: 'text', token: responseText || "Done! Is there anything else?", last: true }));
+                    console.log(`[WS-Projects] Gemini (${callSid}): ${responseText?.substring(0, 80)}`);
+
+                } catch (apiError) {
+                    console.error(`[WS-Projects] Gemini API Error for ${callSid}:`, apiError);
+                    ws.send(JSON.stringify({ type: 'text', token: "Sorry, I ran into an issue. Please try again.", last: true }));
+                }
+
+            } else if (data.type === 'interrupt') {
+                console.log(`[WS-Projects] Interruption for call ${callSid}`);
+            }
+        } catch (e) {
+            console.error('[WS-Projects] Error:', e);
+        }
+    });
+
+    ws.on('close', () => {
+        console.log(`[WS-Projects] Closed for call: ${callSid}`);
+        if (callSid && sessions[callSid]) delete sessions[callSid];
     });
 });
 
