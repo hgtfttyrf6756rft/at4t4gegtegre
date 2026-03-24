@@ -409,7 +409,30 @@ export async function handleIncomingMessage(
     let activeTools = tools; // Default all tools
     let projectList: { id: string, name: string, description: string }[] = [];
 
-    if (leadCaptureEnabled) {
+    if (userData.agentPhoneConfig?.mode === 'note') {
+        console.log(`[phoneAgent] Note mode conversational reply for user ${uid}. Injecting notes context.`);
+        try {
+            const notesSnapshot = await db.collection('users').doc(uid).collection('phoneAgentNotes')
+                .orderBy('timestamp', 'asc').get();
+            
+            const notes = notesSnapshot.docs.map(doc => {
+                const data = doc.data();
+                return `[${new Date(data.timestamp).toLocaleString()}] ${data.body}`;
+            });
+
+            const notesContextString = notes.length > 0
+                ? `USER'S STORED NOTES:\n${notes.join('\n')}`
+                : `(User has no stored notes yet.)`;
+
+            projectListContext = `\nNOTE MODE ACTIVE. You are an AI assistant answering SMS queries.\nYour behavior: STRICTLY answer based on the user's stored notes below. Do NOT perform actions or mention capabilities outside of reading notes. If the notes do not contain the answer, politely say you don't have that information.\n\n${notesContextString}\n`;
+            
+            activeTools = []; // Disable standard assistant tools
+        } catch (err) {
+            console.error('[phoneAgent] Failed to fetch notes for SMS context:', err);
+            projectListContext = `\nNOTE MODE ACTIVE. Error retrieving notes.\n`;
+            activeTools = [];
+        }
+    } else if (leadCaptureEnabled) {
         // Restricted Lead Capture Mode: No project access for security
         console.log(`[phoneAgent] Lead Capture mode enabled for user ${uid}. Restricting context and tools.`);
 
@@ -455,7 +478,13 @@ export async function handleIncomingMessage(
         systemInstruction += `USER'S CUSTOM INSTRUCTIONS: ${customPrompt}\n`;
     }
 
-    if (leadCaptureEnabled) {
+    if (userData.agentPhoneConfig?.mode === 'note') {
+        systemInstruction += `${projectListContext}
+
+SMS FORMATTING:
+- Keep replies under 300 characters.
+- Use line breaks for readability.`;
+    } else if (leadCaptureEnabled) {
         systemInstruction += `${projectListContext}
 
 CAPABILITIES:
