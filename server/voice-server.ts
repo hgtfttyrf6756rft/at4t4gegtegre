@@ -6,6 +6,8 @@ import * as querystring from 'querystring';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as phoneAgentService from '../services/phoneAgentService';
+import * as url from 'url';
+import * as path from 'path';
 
 // Load environment variables
 dotenv.config();
@@ -18,6 +20,7 @@ if (!DOMAIN) {
 }
 
 const WS_URL = DOMAIN ? `wss://${DOMAIN}/ws` : `ws://localhost:${PORT}/ws`;
+const WS_URL_FOR_HEALTH = WS_URL;
 
 const WELCOME_GREETING = "Hi! I am a voice assistant powered by Twilio and Google Gemini. Ask me anything!";
 
@@ -305,7 +308,7 @@ const server = http.createServer(async (req, res) => {
     // Health check endpoint — allows Render/UptimeRobot to keep the server awake
     if (req.method === 'GET' && (req.url === '/health' || req.url === '/')) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), wsUrl: WS_URL }));
+        res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), wsUrl: WS_URL_FOR_HEALTH }));
         return;
     }
 
@@ -364,26 +367,9 @@ const server = http.createServer(async (req, res) => {
                 return;
             }
 
-            // Check if caller's personal number is linked to an account → route to project manager
+            // Setup Mode Trigger (Strictly for setup agents per user request)
             if (to === '+16474904049') {
-                const firestore = initFirebase();
-                let isLinkedCaller = false;
-                if (firestore) {
-                    try {
-                        const normalizedFrom = normalizePhoneNumber(from);
-                        const noPlusFrom = normalizedFrom.startsWith('+') ? normalizedFrom.substring(1) : normalizedFrom;
-                        const searchValues = [...new Set([from, normalizedFrom, noPlusFrom, `+${noPlusFrom}`])].slice(0, 4);
-                        const snap = await firestore.collection('users').where('personalPhoneNumber', 'in', searchValues).limit(1).get();
-                        isLinkedCaller = !snap.empty;
-                    } catch (e) {
-                        console.error('[TwiML] Error checking personalPhoneNumber:', e);
-                    }
-                }
-
-                const targetUrl = isLinkedCaller
-                    ? (DOMAIN ? `https://${DOMAIN}/twiml-projects` : `http://localhost:${PORT}/twiml-projects`)
-                    : (DOMAIN ? `https://${DOMAIN}/twiml-setup` : `http://localhost:${PORT}/twiml-setup`);
-
+                const targetUrl = DOMAIN ? `https://${DOMAIN}/twiml-setup` : `http://localhost:${PORT}/twiml-setup`;
                 const xmlRedirect = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Redirect method="POST">${targetUrl}</Redirect>
@@ -550,13 +536,40 @@ const server = http.createServer(async (req, res) => {
 
 
 // ─── WebSocket Server ─────────────────────────────────────────────────────────
-const wss = new WebSocketServer({ server, path: '/ws' });
+const wss = new WebSocketServer({ noServer: true });
+const wssNote = new WebSocketServer({ noServer: true });
+const wssSetup = new WebSocketServer({ noServer: true });
+const wssProjects = new WebSocketServer({ noServer: true });
 
-wss.on('connection', (ws: WebSocket) => {
+server.on('upgrade', (request, socket, head) => {
+    const pathname = url.parse(request.url || '').pathname;
+
+    if (pathname === '/ws') {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
+        });
+    } else if (pathname === '/ws-note') {
+        wssNote.handleUpgrade(request, socket, head, (ws) => {
+            wssNote.emit('connection', ws, request);
+        });
+    } else if (pathname === '/ws-setup') {
+        wssSetup.handleUpgrade(request, socket, head, (ws) => {
+            wssSetup.emit('connection', ws, request);
+        });
+    } else if (pathname === '/ws-projects') {
+        wssProjects.handleUpgrade(request, socket, head, (ws) => {
+            wssProjects.emit('connection', ws, request);
+        });
+    } else {
+        socket.destroy();
+    }
+});
+
+wss.on('connection', (wsMain: WebSocket) => {
     let callSid: string | null = null;
     let callerNumber: string = '';
 
-    ws.on('message', async (message: string) => {
+    wsMain.on('message', async (message: string) => {
         try {
             const data = JSON.parse(message);
 
@@ -714,7 +727,7 @@ wss.on('connection', (ws: WebSocket) => {
                         }
                     }
 
-                    ws.send(JSON.stringify({
+                    wsMain.send(JSON.stringify({
                         type: 'text',
                         token: responseText,
                         last: true
@@ -723,7 +736,7 @@ wss.on('connection', (ws: WebSocket) => {
                     console.log(`[WS] Gemini (${callSid}): ${responseText}`);
                 } catch (apiError) {
                     console.error(`[WS] Gemini API Error for ${callSid}:`, apiError);
-                    ws.send(JSON.stringify({
+                    wsMain.send(JSON.stringify({
                         type: 'text',
                         token: "I'm sorry, I encountered an error processing your request.",
                         last: true
@@ -737,7 +750,7 @@ wss.on('connection', (ws: WebSocket) => {
         }
     });
 
-    ws.on('close', () => {
+    wsMain.on('close', () => {
         console.log(`[WS] Closed for call: ${callSid}`);
         if (callSid && sessions[callSid]) {
             delete sessions[callSid];
@@ -747,14 +760,10 @@ wss.on('connection', (ws: WebSocket) => {
 
 // ─── Note Mode WebSocket (/ws-note) — Gemini Live API Bridge ─────────────────
 // This handler is used when the user has configured their phone agent in Note Mode.
-// Their SMS notes are fetched from Firestore and injected as RAG context into the
-// Gemini Live API session for real-time voice Q&A.
-const wssNote = new WebSocketServer({ server, path: '/ws-note' });
-
-wssNote.on('connection', (ws: WebSocket) => {
+wssNote.on('connection', (wsNote: WebSocket) => {
     let callSid: string | null = null;
 
-    ws.on('message', async (message: string) => {
+    wsNote.on('message', async (message: string) => {
         try {
             const data = JSON.parse(message);
 
@@ -832,12 +841,12 @@ wssNote.on('connection', (ws: WebSocket) => {
                 ].filter(Boolean).join('\n');
 
                 // Store the system prompt on the WebSocket connection for use in prompt handling
-                (ws as any).__noteSystemPrompt = noteSystemPrompt;
+                (wsNote as any).__noteSystemPrompt = noteSystemPrompt;
                 console.log(`[WS-Note] System prompt ready (${noteSystemPrompt.length} chars)`);
 
             } else if (data.type === 'prompt') {
                 const userPrompt = data.voicePrompt || data.textPrompt || '';
-                const systemPrompt = (ws as any).__noteSystemPrompt || '';
+                const systemPrompt = (wsNote as any).__noteSystemPrompt || '';
                 console.log(`[WS-Note] User (${callSid}): ${userPrompt}`);
 
                 try {
@@ -854,11 +863,11 @@ wssNote.on('connection', (ws: WebSocket) => {
                         .map((p: any) => p.text)
                         .join('') || "I couldn't find an answer in your notes.";
 
-                    ws.send(JSON.stringify({ type: 'text', token: responseText, last: true }));
+                    wsNote.send(JSON.stringify({ type: 'text', token: responseText, last: true }));
                     console.log(`[WS-Note] Gemini (${callSid}): ${responseText.substring(0, 80)}...`);
                 } catch (apiError) {
                     console.error(`[WS-Note] Gemini API Error for ${callSid}:`, apiError);
-                    ws.send(JSON.stringify({ type: 'text', token: "I'm sorry, I had trouble looking up your notes.", last: true }));
+                    wsNote.send(JSON.stringify({ type: 'text', token: "I'm sorry, I had trouble looking up your notes.", last: true }));
                 }
 
             } else if (data.type === 'interrupt') {
@@ -869,19 +878,17 @@ wssNote.on('connection', (ws: WebSocket) => {
         }
     });
 
-    ws.on('close', () => {
+    wsNote.on('close', () => {
         console.log(`[WS-Note] Closed for call: ${callSid}`);
     });
 });
 
 // ─── Setup Mode WebSocket (/ws-setup) — Gemini Live API Bridge ─────────────────
-const wssSetup = new WebSocketServer({ server, path: '/ws-setup' });
-
-wssSetup.on('connection', (ws: WebSocket) => {
+wssSetup.on('connection', (wsSetup: WebSocket) => {
     let callSid: string | null = null;
     let callerNumber: string = '';
 
-    ws.on('message', async (message: string) => {
+    wsSetup.on('message', async (message: string) => {
         try {
             const data = JSON.parse(message);
 
@@ -951,7 +958,7 @@ CRITICAL INSTRUCTIONS:
                                 console.log(`[WS-Setup] Provisioning Agent for ${callerNumber}:`, call.args);
                                 
                                 try {
-                                    ws.send(JSON.stringify({
+                                    wsSetup.send(JSON.stringify({
                                         type: 'text',
                                         token: "I'm setting up your agent now. This will take just a moment while I reserve your new phone number.",
                                         last: false
@@ -1076,7 +1083,7 @@ CRITICAL INSTRUCTIONS:
                         }
                     }
 
-                    ws.send(JSON.stringify({
+                    wsSetup.send(JSON.stringify({
                         type: 'text',
                         token: responseText,
                         last: true
@@ -1092,7 +1099,7 @@ CRITICAL INSTRUCTIONS:
         }
     });
 
-    ws.on('close', () => {
+    wsSetup.on('close', () => {
         if (callSid && sessions[callSid]) {
             delete sessions[callSid];
         }
@@ -1100,10 +1107,7 @@ CRITICAL INSTRUCTIONS:
 });
 
 // ─── Projects Mode WebSocket (/ws-projects) ──────────────────────────────────
-// Handles linked account callers who want to manage their Freshfront projects.
-const wssProjects = new WebSocketServer({ server, path: '/ws-projects' });
-
-wssProjects.on('connection', (ws: WebSocket) => {
+wssProjects.on('connection', (wsProjects: WebSocket) => {
     let callSid: string | null = null;
     let callerNumber: string = '';
     let callerUid: string = '';
@@ -1111,7 +1115,7 @@ wssProjects.on('connection', (ws: WebSocket) => {
     // Cache project names/IDs for this session
     let projectsCache: Array<{ id: string; name: string }> = [];
 
-    ws.on('message', async (message: string) => {
+    wsProjects.on('message', async (message: string) => {
         try {
             const data = JSON.parse(message);
 
@@ -1355,12 +1359,12 @@ After each successful action, confirm it was saved and mention that an SMS confi
                         }
                     }
 
-                    ws.send(JSON.stringify({ type: 'text', token: responseText || "Done! Is there anything else?", last: true }));
+                    wsProjects.send(JSON.stringify({ type: 'text', token: responseText || "Done! Is there anything else?", last: true }));
                     console.log(`[WS-Projects] Gemini (${callSid}): ${responseText?.substring(0, 80)}`);
 
                 } catch (apiError) {
                     console.error(`[WS-Projects] Gemini API Error for ${callSid}:`, apiError);
-                    ws.send(JSON.stringify({ type: 'text', token: "Sorry, I ran into an issue. Please try again.", last: true }));
+                    wsProjects.send(JSON.stringify({ type: 'text', token: "Sorry, I ran into an issue. Please try again.", last: true }));
                 }
 
             } else if (data.type === 'interrupt') {
@@ -1371,7 +1375,7 @@ After each successful action, confirm it was saved and mention that an SMS confi
         }
     });
 
-    ws.on('close', () => {
+    wsProjects.on('close', () => {
         console.log(`[WS-Projects] Closed for call: ${callSid}`);
         if (callSid && sessions[callSid]) delete sessions[callSid];
     });
