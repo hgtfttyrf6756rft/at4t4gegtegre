@@ -5,6 +5,7 @@ import { GoogleGenAI, Type, Schema } from '@google/genai';
 import * as querystring from 'querystring';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
+import * as phoneAgentService from '../services/phoneAgentService';
 
 // Load environment variables
 dotenv.config();
@@ -125,6 +126,32 @@ const leadCaptureTool = {
     ]
 };
 
+const provisionLeadAgentTool = {
+    functionDeclarations: [
+        {
+            name: "provisionLeadAgent",
+            description: "Reserves a new phone number and configures it for Lead Capture using the gathered details.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    companyName: { type: Type.STRING, description: "Company Name" },
+                    description: { type: Type.STRING, description: "Company Description" },
+                    website: { type: Type.STRING, description: "Website" },
+                    email: { type: Type.STRING, description: "Company Email" },
+                    productService: { type: Type.STRING, description: "Product or service provided" },
+                    dataToCollect: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING },
+                        description: "List of fields to collect from callers (e.g. ['Name', 'Phone Number'])"
+                    },
+                    leadDestination: { type: Type.STRING, description: "Route destination: 'email', 'sms', or 'app'" }
+                },
+                required: ["companyName", "description", "productService", "dataToCollect", "leadDestination"]
+            }
+        }
+    ]
+};
+
 // Store active chat sessions
 const sessions: { [callSid: string]: { contents: any[], uid?: string, agentName?: string, agentInstructions?: string, systemPrompt?: string } } = {};
 
@@ -154,7 +181,11 @@ async function getUserConfig(phoneNumber: string): Promise<any> {
             const usersRef = firestore.collection('users');
             const searchValues = [phoneNumber, normalizedTarget, noPlusTarget, `+${noPlusTarget}`];
             const uniqueValues = [...new Set(searchValues)].slice(0, 10);
-            const snapshot = await usersRef.where('agentPhoneNumber', 'in', uniqueValues).limit(1).get();
+            let snapshot = await usersRef.where('agentPhoneNumbersList', 'array-contains-any', uniqueValues).limit(1).get();
+
+            if (snapshot.empty) {
+                snapshot = await usersRef.where('agentPhoneNumber', 'in', uniqueValues).limit(1).get();
+            }
 
             if (!snapshot.empty) {
                 const doc = snapshot.docs[0];
@@ -205,14 +236,17 @@ const server = http.createServer(async (req, res) => {
 
             try {
                 const userData = await getUserConfig(to);
-                if (userData?.agentPhoneConfig?.enabled) {
-                    isNoteMode = userData.agentPhoneConfig.mode === 'note';
-                    if (userData.agentPhoneConfig.welcomeGreeting) {
-                        welcomeGreeting = userData.agentPhoneConfig.welcomeGreeting;
+                const normalizedTarget = normalizePhoneNumber(to);
+                const activeConfig = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
+                
+                if (activeConfig?.enabled) {
+                    isNoteMode = activeConfig.mode === 'note' || activeConfig.mode === 'notes';
+                    if (activeConfig.welcomeGreeting) {
+                        welcomeGreeting = activeConfig.welcomeGreeting;
                     }
                     // Resolve voice using voiceName (Gemini Chirp3 HD) or voiceGender fallback
-                    voice = resolveVoice(userData.agentPhoneConfig);
-                    console.log(`[TwiML] Resolved voice: ${voice} (mode=${userData.agentPhoneConfig.mode}, voiceName=${userData.agentPhoneConfig.voiceName})`);
+                    voice = resolveVoice(activeConfig);
+                    console.log(`[TwiML] Resolved voice: ${voice} (mode=${activeConfig.mode}, voiceName=${activeConfig.voiceName})`);
                 }
             } catch (e) {
                 console.error('[TwiML] Error fetching user config:', e);
@@ -226,6 +260,18 @@ const server = http.createServer(async (req, res) => {
                 const xmlRedirect = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Redirect method="POST">${noteTwimlUrl}</Redirect>
+</Response>`;
+                res.writeHead(200, { 'Content-Type': 'text/xml' });
+                res.end(xmlRedirect);
+                return;
+            }
+
+            // Setup Mode Trigger
+            if (to === '+16474904049') {
+                const setupTwimlUrl = DOMAIN ? `https://${DOMAIN}/twiml-setup` : `http://localhost:${PORT}/twiml-setup`;
+                const xmlRedirect = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Redirect method="POST">${setupTwimlUrl}</Redirect>
 </Response>`;
                 res.writeHead(200, { 'Content-Type': 'text/xml' });
                 res.end(xmlRedirect);
@@ -274,11 +320,14 @@ const server = http.createServer(async (req, res) => {
 
             try {
                 const userData = await getUserConfig(to);
-                if (userData?.agentPhoneConfig?.enabled) {
-                    if (userData.agentPhoneConfig.welcomeGreeting) {
-                        welcomeGreeting = userData.agentPhoneConfig.welcomeGreeting;
+                const normalizedTarget = normalizePhoneNumber(to);
+                const activeConfig = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
+                
+                if (activeConfig?.enabled) {
+                    if (activeConfig.welcomeGreeting) {
+                        welcomeGreeting = activeConfig.welcomeGreeting;
                     }
-                    voice = resolveVoice(userData.agentPhoneConfig);
+                    voice = resolveVoice(activeConfig);
                 }
             } catch (e) {
                 console.error('[TwiML-Note] Error fetching user config:', e);
@@ -292,6 +341,37 @@ const server = http.createServer(async (req, res) => {
             welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
             ttsProvider="Google"
             voice="${voice}"
+        >
+            <Parameter name="to" value="${escapeXmlAttr(to)}" />
+            <Parameter name="from" value="${escapeXmlAttr(from)}" />
+        </ConversationRelay>
+    </Connect>
+</Response>`;
+            res.writeHead(200, { 'Content-Type': 'text/xml' });
+            res.end(xmlResponse);
+        });
+        return;
+    }
+
+    // POST /twiml-setup — Setup Mode voice handler
+    if (req.method === 'POST' && req.url === '/twiml-setup') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', async () => {
+            const postData = querystring.parse(body);
+            const to = postData.To as string || '';
+            const from = postData.From as string || '';
+
+            const WS_SETUP_URL = DOMAIN ? `wss://${DOMAIN}/ws-setup` : `ws://localhost:${PORT}/ws-setup`;
+
+            const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <ConversationRelay 
+            url="${WS_SETUP_URL}" 
+            welcomeGreeting="Welcome to the Freshfront Agent Setup line! I'm here to help you configure a new AI phone agent to handle your incoming leads. What's the name of your business?"
+            ttsProvider="Google"
+            voice="en-US-Journey-F"
         >
             <Parameter name="to" value="${escapeXmlAttr(to)}" />
             <Parameter name="from" value="${escapeXmlAttr(from)}" />
@@ -335,13 +415,14 @@ wss.on('connection', (ws: WebSocket) => {
                 const userData = await getUserConfig(to);
                 if (userData) {
                     uid = userData.uid;
-                    const config = userData.agentPhoneConfig;
+                    const normalizedTarget = normalizePhoneNumber(to);
+                    const config = userData.agentPhoneConfigs?.[to] || userData.agentPhoneConfigs?.[normalizedTarget] || userData.agentPhoneConfig;
 
                     if (config?.enabled) {
                         let customInstructions = config.systemPrompt || '';
                         let projectListContext = '';
 
-                        if (config.leadCaptureEnabled) {
+                        if (config.mode === 'leads' || config.leadCaptureEnabled) {
                             if (config.leadFields?.length > 0) {
                                 const fields = config.leadFields.map((f: any) => `${f.name}${f.required ? ' (required)' : ''}`).join(', ');
                                 customInstructions += `\n\nLEAD CAPTURE TASK: Your primary goal is to politely collect the following information from the caller: ${fields}. 
@@ -399,8 +480,10 @@ wss.on('connection', (ws: WebSocket) => {
 
                 try {
                     const firestore = initFirebase();
-                    const config = (session.uid && firestore) ? (await getUserConfig(callerNumber))?.agentPhoneConfig : null;
-                    const leadCaptureEnabled = !!config?.leadCaptureEnabled;
+                    const userData = (session.uid && firestore) ? await getUserConfig(callerNumber) : null;
+                    const normalizedTarget = normalizePhoneNumber(callerNumber);
+                    const config = userData?.agentPhoneConfigs?.[callerNumber] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
+                    const leadCaptureEnabled = config?.mode === 'leads' || !!config?.leadCaptureEnabled;
 
                     const response = await ai.models.generateContent({
                         model: 'gemini-2.0-flash',
@@ -530,13 +613,26 @@ wssNote.on('connection', (ws: WebSocket) => {
                 if (firestore) {
                     try {
                         // Find user by phone number
-                        const userSnap = await firestore.collection('users')
-                            .where('agentPhoneNumber', '==', to)
+                        const normalizedTarget = normalizePhoneNumber(to);
+                        const noPlusTarget = normalizedTarget.startsWith('+') ? normalizedTarget.substring(1) : normalizedTarget;
+                        const searchValues = [to, normalizedTarget, noPlusTarget, `+${noPlusTarget}`];
+                        const uniqueValues = [...new Set(searchValues)].slice(0, 10);
+                        
+                        let userSnap = await firestore.collection('users')
+                            .where('agentPhoneNumbersList', 'array-contains-any', uniqueValues)
                             .limit(1).get();
+                        
+                        if (userSnap.empty) {
+                            userSnap = await firestore.collection('users')
+                                .where('agentPhoneNumber', 'in', uniqueValues)
+                                .limit(1).get();
+                        }
+                        
                         if (!userSnap.empty) {
                             const userDoc = userSnap.docs[0];
                             const uid = userDoc.id;
-                            const config = userDoc.data()?.agentPhoneConfig;
+                            const userData = userDoc.data();
+                            const config = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
                             customSystemPrompt = config?.systemPrompt || '';
 
                             // Fetch all notes
@@ -616,6 +712,231 @@ wssNote.on('connection', (ws: WebSocket) => {
 
     ws.on('close', () => {
         console.log(`[WS-Note] Closed for call: ${callSid}`);
+    });
+});
+
+// ─── Setup Mode WebSocket (/ws-setup) — Gemini Live API Bridge ─────────────────
+const wssSetup = new WebSocketServer({ server, path: '/ws-setup' });
+
+wssSetup.on('connection', (ws: WebSocket) => {
+    let callSid: string | null = null;
+    let callerNumber: string = '';
+
+    ws.on('message', async (message: string) => {
+        try {
+            const data = JSON.parse(message);
+
+            if (data.type === 'setup') {
+                callSid = data.callSid;
+                const to = data.customParameters?.to || '';
+                callerNumber = data.customParameters?.from || '';
+
+                console.log(`[WS-Setup] Setup for call: ${callSid} (To: ${to}, From: ${callerNumber})`);
+
+                const systemPrompt = `You are the Freshfront Agent Setup Assistant. You are talking to a user on the phone who wants to create a personalized AI Phone Agent to capture leads for their business.
+Your goal is to politely collect the following details:
+1. Company Name
+2. Company Description
+3. Website (if they have one)
+4. Company Email Address
+5. The product or service they provide
+6. What specific data they want to collect from callers (e.g. Name, Phone Number, Inquiry Details).
+7. Where they want the collected leads sent: 'email', 'sms', or 'app'. If they say app or dashboard, it's 'app'.
+
+CRITICAL INSTRUCTIONS:
+- You are communicating via a voice call. Keep your responses conversational, friendly, and concise. Avoid long monologues.
+- If a name, email address, or website sounds ambiguous or unusual, explicitly ask the user to spell it out for you to ensure accuracy.
+- Once you have collected ALL the required information, you MUST call the 'provisionLeadAgent' tool to reserve their phone number and configure their account.
+- Do not make up information. Use only what the user provides.
+- Never use markdown syntax (like *, **, #) in your responses, as it will be spoken aloud.`;
+
+                sessions[callSid!] = {
+                    contents: [],
+                    systemPrompt
+                };
+
+            } else if (data.type === 'prompt') {
+                if (!callSid || !sessions[callSid]) return;
+
+                const userPrompt = data.voicePrompt || data.textPrompt;
+                console.log(`[WS-Setup] User (${callSid}): ${userPrompt}`);
+
+                const session = sessions[callSid];
+                session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
+
+                try {
+                    const response = await ai.models.generateContent({
+                        model: 'gemini-2.0-flash',
+                        contents: session.contents,
+                        config: {
+                            systemInstruction: session.systemPrompt,
+                            tools: [provisionLeadAgentTool]
+                        }
+                    });
+
+                    if (response.candidates?.[0]?.content) {
+                        session.contents.push(response.candidates[0].content);
+                    }
+
+                    let responseText = '';
+                    const parts = response.candidates?.[0]?.content?.parts || [];
+
+                    for (const part of parts) {
+                        if (part.text) {
+                            responseText += part.text;
+                        }
+
+                        if (part.functionCall) {
+                            const call = part.functionCall;
+                            if (call.name === 'provisionLeadAgent') {
+                                console.log(`[WS-Setup] Provisioning Agent for ${callerNumber}:`, call.args);
+                                
+                                try {
+                                    ws.send(JSON.stringify({
+                                        type: 'text',
+                                        token: "I'm setting up your agent now. This will take just a moment while I reserve your new phone number.",
+                                        last: false
+                                    }));
+
+                                    const firestore = initFirebase();
+                                    
+                                    let uid = 'placeholder_user';
+                                    let userData: any = {};
+                                    let userRef: any = null;
+
+                                    if (firestore) {
+                                        const normalizedTarget = normalizePhoneNumber(callerNumber);
+                                        const noPlusTarget = normalizedTarget.startsWith('+') ? normalizedTarget.substring(1) : normalizedTarget;
+                                        
+                                        const searchValues = [callerNumber, normalizedTarget, noPlusTarget, `+${noPlusTarget}`];
+                                        const uniqueValues = [...new Set(searchValues)].slice(0, 5);
+                                        
+                                        let userSnap = await firestore.collection('users')
+                                            .where('personalPhoneNumber', 'in', uniqueValues)
+                                            .limit(1).get();
+                                            
+                                        if (!userSnap.empty) {
+                                            userRef = userSnap.docs[0].ref;
+                                            userData = userSnap.docs[0].data();
+                                            uid = userSnap.docs[0].id;
+                                            console.log(`[WS-Setup] Found matching user ${uid} by personalPhoneNumber.`);
+                                        } else {
+                                            console.log(`[WS-Setup] No matching user found for ${callerNumber}. Working anonymously.`);
+                                        }
+                                    }
+
+                                    const appUrl = DOMAIN ? `https://${DOMAIN}` : (process.env.APP_URL || 'http://localhost');
+                                    const voiceUrl = DOMAIN ? `https://${DOMAIN}/twiml` : `${appUrl}/twiml`;
+                                    
+                                    const areaCodeContext = callerNumber.startsWith('+1') ? callerNumber.substring(2, 5) : '415';
+                                    
+                                    const newTwilioNumber = await phoneAgentService.buyTwilioNumber(areaCodeContext, appUrl, voiceUrl);
+                                    console.log(`[WS-Setup] Successfully bought number: ${newTwilioNumber}`);
+
+                                    const args = call.args as any;
+                                    
+                                    const leadFields = (args.dataToCollect || []).map((fieldName: string) => ({
+                                        id: Math.random().toString(36).substr(2, 9),
+                                        name: fieldName,
+                                        required: true
+                                    }));
+                                    
+                                    const newConfig = {
+                                        enabled: true,
+                                        mode: 'leads',
+                                        systemPrompt: `You are the lead capture phone agent for ${args.companyName}. ${args.description}. You offer: ${args.productService}. Website: ${args.website || 'N/A'}. Email: ${args.email || 'N/A'}. Be helpful, extremely brief, and professional.`,
+                                        leadCaptureEnabled: true,
+                                        leadFields: leadFields,
+                                        leadDestination: args.leadDestination || 'app',
+                                    };
+
+                                    if (userRef) {
+                                        const newList = [...(userData.agentPhoneNumbersList || [])];
+                                        if (!newList.includes(newTwilioNumber)) newList.push(newTwilioNumber);
+
+                                        const allConfigs = { ...(userData.agentPhoneConfigs || {}) };
+                                        allConfigs[newTwilioNumber] = newConfig;
+
+                                        await userRef.update({
+                                            agentPhoneNumbersList: newList,
+                                            agentPhoneConfigs: allConfigs
+                                        });
+                                        console.log(`[WS-Setup] Saved new config to user ${uid}`);
+                                    } else if (firestore) {
+                                        await firestore.collection('unclaimedAgents').doc(newTwilioNumber).set({
+                                            personalPhoneNumber: callerNumber,
+                                            agentPhoneConfig: newConfig,
+                                            createdAt: new Date().toISOString()
+                                        });
+                                        console.log(`[WS-Setup] Saved new config to unclaimedAgents for ${callerNumber}`);
+                                    }
+
+                                    session.contents.push({
+                                        role: 'user',
+                                        parts: [{
+                                            functionResponse: {
+                                                name: 'provisionLeadAgent',
+                                                response: { 
+                                                    success: true, 
+                                                    newNumber: newTwilioNumber,
+                                                    status: userRef ? "Assigned to existing account" : "Created temporarily. User should sign up with their phone number to claim."
+                                                }
+                                            }
+                                        }]
+                                    });
+
+                                    const followup = await ai.models.generateContent({
+                                        model: 'gemini-2.0-flash',
+                                        contents: session.contents,
+                                        config: {
+                                            systemInstruction: session.systemPrompt,
+                                            tools: [provisionLeadAgentTool]
+                                        }
+                                    });
+
+                                    if (followup.candidates?.[0]?.content) {
+                                        session.contents.push(followup.candidates[0].content);
+                                        const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
+                                        if (textPart?.text) {
+                                            responseText += " " + textPart.text;
+                                        }
+                                    }
+                                } catch (provErr: any) {
+                                    console.error("[WS-Setup] Error provisioning agent:", provErr);
+                                    session.contents.push({
+                                        role: 'user',
+                                        parts: [{
+                                            functionResponse: {
+                                                name: 'provisionLeadAgent',
+                                                response: { success: false, error: provErr.message || "Failed to provision number." }
+                                            }
+                                        }]
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    ws.send(JSON.stringify({
+                        type: 'text',
+                        token: responseText,
+                        last: true
+                    }));
+
+                    console.log(`[WS-Setup] Gemini (${callSid}): ${responseText}`);
+                } catch (apiError) {
+                    console.error(`[WS-Setup] Gemini API Error for ${callSid}:`, apiError);
+                }
+            }
+        } catch (e) {
+            console.error('[WS-Setup] Error:', e);
+        }
+    });
+
+    ws.on('close', () => {
+        if (callSid && sessions[callSid]) {
+            delete sessions[callSid];
+        }
     });
 });
 
