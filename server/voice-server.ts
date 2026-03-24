@@ -295,6 +295,7 @@ const server = http.createServer(async (req, res) => {
             res.writeHead(200, { 'Content-Type': 'text/xml' });
             res.end(xmlResponse);
         });
+        return;
     }
 
     // GET /twiml-note — probe endpoint
