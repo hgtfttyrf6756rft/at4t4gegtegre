@@ -431,8 +431,7 @@ export default {
 
             console.log(`[twilio-webhook] Incoming: From=${from} To=${to} MessageSid=${messageSid} Body="${bodyStr}" Media=${numMedia}`);
 
-            // ─── NOTE MODE: silently store SMS as a note (if trainer), or answer conversationally (if not)
-            // ─── NOTE MODE: silently store SMS as a note (if trainer), or answer conversationally (if not)
+            // ─── NOTE MODE: Handle SMS to a hotline/note-mode number ─────────────────
             try {
                 let usersSnap = await db.collection('users')
                     .where('agentPhoneNumbersList', 'array-contains', to)
@@ -446,37 +445,133 @@ export default {
                         .get();
                 }
 
+                // Check if this number belongs to a linked user
+                let isLinkedOwner = false;
+                let linkedUid = '';
+                let linkedUserRef: any = null;
+                let hotlineConfig: any = null;
+
                 if (!usersSnap.empty) {
                     const userData = usersSnap.docs[0].data();
                     const activeConfig = userData.agentPhoneConfigs?.[to] || userData.agentPhoneConfig;
 
                     if ((activeConfig?.mode === 'note' || activeConfig?.mode === 'notes') && activeConfig?.enabled) {
+                        linkedUid = usersSnap.docs[0].id;
+                        linkedUserRef = usersSnap.docs[0].ref;
+                        hotlineConfig = activeConfig;
+
+                        // Check if sender is the owner (compare personalPhoneNumber)
+                        const ownerNum = (userData.personalPhoneNumber || '').replace(/\D/g, '');
+                        const senderNum = from.replace(/\D/g, '');
+                        isLinkedOwner = ownerNum.length > 0 && (ownerNum === senderNum || ownerNum.endsWith(senderNum) || senderNum.endsWith(ownerNum));
+                    }
+                }
+
+                // Also check unclaimedAgents for unlinked hotlines
+                let isUnlinkedOwner = false;
+                let unclaimedRef: any = null;
+                let unclaimedData: any = null;
+
+                if (!isLinkedOwner) {
+                    try {
+                        const unclaimedSnap = await db.collection('unclaimedAgents').doc(to).get();
+                        if (unclaimedSnap.exists) {
+                            unclaimedData = unclaimedSnap.data();
+                            const unclaimedOwnerNum = (unclaimedData?.ownerPhone || unclaimedData?.personalPhoneNumber || '').replace(/\D/g, '');
+                            const senderNum = from.replace(/\D/g, '');
+                            isUnlinkedOwner = unclaimedOwnerNum.length > 0 && (unclaimedOwnerNum === senderNum || unclaimedOwnerNum.endsWith(senderNum) || senderNum.endsWith(unclaimedOwnerNum));
+                            if (isUnlinkedOwner) unclaimedRef = unclaimedSnap.ref;
+                        }
+                    } catch (e) {
+                        console.warn('[twilio-webhook] Could not check unclaimedAgents:', e);
+                    }
+                }
+
+                const isNoteOwner = isLinkedOwner || isUnlinkedOwner;
+                const isNoteMode = hotlineConfig?.enabled || (isUnlinkedOwner && unclaimedData?.agentPhoneConfig?.mode === 'notes');
+
+                if (isNoteMode && isNoteOwner && bodyStr?.trim()) {
+                    // ─── Save the note ───
+                    if (isLinkedOwner && linkedUserRef) {
+                        await db.collection('users').doc(linkedUid).collection('phoneAgentNotes').add({
+                            body: bodyStr,
+                            from,
+                            timestamp: Date.now()
+                        });
+                        console.log(`[twilio-webhook] Note Mode: saved note from linked owner ${from} for user ${linkedUid}`);
+
+                        // ─── Chatbot reply for linked owners ───
+                        // Load last 20 notes for context
+                        const notesSnap = await db.collection('users').doc(linkedUid)
+                            .collection('phoneAgentNotes')
+                            .orderBy('timestamp', 'desc')
+                            .limit(20)
+                            .get();
+                        const notesContext = notesSnap.docs
+                            .map(d => `[${new Date(d.data().timestamp).toLocaleString()}] ${d.data().body}`)
+                            .join('\n');
+
+                        const { GoogleGenAI } = await import('@google/genai');
+                        const genai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || process.env.API_KEY || '' });
+                        const chatPrompt = `You are a helpful AI assistant for this phone hotline. The user just texted: "${bodyStr}"\n\nHere are the notes stored in this hotline so far:\n${notesContext || '(no notes yet)'}\n\nRespond conversationally in 1-2 short sentences, like a smart chatbot. Acknowledge if you stored their note, and answer any question they asked.`;
+
+                        const chatResp = await genai.models.generateContent({
+                            model: 'gemini-2.0-flash',
+                            contents: [{ role: 'user', parts: [{ text: chatPrompt }] }]
+                        });
+                        const replyText = chatResp.text || 'Got it! Note saved.';
+
+                        await phoneAgentService.sendTwilioSms(from, to, replyText);
+                    } else if (isUnlinkedOwner && unclaimedRef) {
+                        // ─── Unlinked owner: store note counter and send upsell on 3rd ───
+                        const currentCount = (unclaimedData?.ownerNoteCount || 0) + 1;
+                        await unclaimedRef.update({ ownerNoteCount: currentCount });
+
+                        // Also persist the note in a subcollection
+                        await unclaimedRef.collection('notes').add({
+                            body: bodyStr,
+                            from,
+                            timestamp: Date.now()
+                        });
+                        console.log(`[twilio-webhook] Note Mode: saved note #${currentCount} from unlinked owner ${from}`);
+
+                        if (currentCount >= 3) {
+                            const upsellMsg = `You've added ${currentCount} notes to your hotline ✨ Sign up at freshfront.co → Profile Settings → link your phone number to unlock unlimited training, AI replies to your texts, and your full dashboard. (Pro plan required)`;
+                            await phoneAgentService.sendTwilioSms(from, to, upsellMsg);
+                        }
+                    }
+
+                    return new Response(`<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>`, {
+                        status: 200, headers: { 'Content-Type': 'text/xml' }
+                    });
+                }
+
+                // ─── Non-owner callers in note mode: fall through to regular AI ───
+                if (isNoteMode && !isNoteOwner) {
+                    // Allow callers to ask questions via SMS too (treated as regular AI query)
+                    console.log(`[twilio-webhook] Note Mode: non-owner SMS from ${from} — falling through to AI.`);
+                }
+
+                // ─── Legacy trainer-based note mode (existing flow) ───
+                if (!isNoteMode && !usersSnap.empty) {
+                    const userData = usersSnap.docs[0].data();
+                    const activeConfig = userData.agentPhoneConfigs?.[to] || userData.agentPhoneConfig;
+                    if ((activeConfig?.mode === 'note' || activeConfig?.mode === 'notes') && activeConfig?.enabled) {
                         const uid = usersSnap.docs[0].id;
-                        
                         const trainerStr = activeConfig.trainerNumbers || '';
                         const trainers = trainerStr.split(',').map((n: string) => n.replace(/\D/g, '')).filter(Boolean);
                         const incomingNum = from.replace(/\D/g, '');
-                        
-                        // If trainers list is populated, check if incoming number is in it.
-                        // If trainers list is empty, we allow the note to be saved to prevent breaking existing setups, but it's recommended to set trainers.
                         const isTrainer = trainers.length === 0 || trainers.includes(incomingNum);
-
-                        if (isTrainer) {
-                            const noteBody = bodyStr || '';
-                            if (noteBody.trim()) {
-                                await db.collection('users').doc(uid).collection('phoneAgentNotes').add({
-                                    body: noteBody,
-                                    from,
-                                    timestamp: Date.now()
-                                });
-                                console.log(`[twilio-webhook] Note Mode: saved note from ${from} for user ${uid}`);
-                            }
-                            // Return empty TwiML — no reply
-                            const twiml = `<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>`;
-                            return new Response(twiml, { status: 200, headers: { 'Content-Type': 'text/xml' } });
-                        } else {
-                            console.log(`[twilio-webhook] Note Mode: ${from} is not a trainer. Falling through to conversational AI.`);
-                            // Fall through to normal processing for non-trainers
+                        if (isTrainer && bodyStr?.trim()) {
+                            await db.collection('users').doc(uid).collection('phoneAgentNotes').add({
+                                body: bodyStr,
+                                from,
+                                timestamp: Date.now()
+                            });
+                            console.log(`[twilio-webhook] Legacy Note Mode: saved note from ${from} for user ${uid}`);
+                            return new Response(`<?xml version="1.0" encoding="UTF-8"?>\n<Response></Response>`, {
+                                status: 200, headers: { 'Content-Type': 'text/xml' }
+                            });
                         }
                     }
                 }
@@ -484,6 +579,7 @@ export default {
                 console.error('[twilio-webhook] Note Mode lookup error:', noteErr);
                 // Fall through to normal processing
             }
+
 
             // Process in background — send result via Twilio REST API
             // This prevents Twilio's 15-second webhook timeout from killing long-running tools
