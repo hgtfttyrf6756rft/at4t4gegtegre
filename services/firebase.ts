@@ -2131,6 +2131,42 @@ export const deletePhoneAgentLead = async (uid: string, leadId: string): Promise
   }
 };
 
+// ========== PHONE AGENT NOTES (Note Mode) ==========
+
+export const getPhoneAgentNotes = async (uid: string): Promise<any[]> => {
+  try {
+    const notesRef = collection(db, "users", uid, "phoneAgentNotes");
+    const q = query(notesRef, orderBy("timestamp", "desc"));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error("Error getting phone agent notes:", error);
+    return [];
+  }
+};
+
+export const savePhoneAgentNote = async (uid: string, note: { body: string; from: string; timestamp: number }): Promise<string> => {
+  try {
+    const notesRef = collection(db, "users", uid, "phoneAgentNotes");
+    const docRef = doc(notesRef);
+    await setDoc(docRef, note);
+    return docRef.id;
+  } catch (error) {
+    console.error("Error saving phone agent note:", error);
+    throw error;
+  }
+};
+
+export const deletePhoneAgentNote = async (uid: string, noteId: string): Promise<void> => {
+  try {
+    const noteRef = doc(db, "users", uid, "phoneAgentNotes", noteId);
+    await deleteDoc(noteRef);
+  } catch (error) {
+    console.error("Error deleting phone agent note:", error);
+    throw error;
+  }
+};
+
 // ========== HOME ASSISTANT FILES ==========
 
 export const saveHomeAssistantFile = async (uid: string, file: HomeAssistantFile): Promise<void> => {
