@@ -314,10 +314,21 @@ const projectManagementTools = {
 // Store active chat sessions
 const sessions: { [callSid: string]: { contents: any[], uid?: string, agentName?: string, agentInstructions?: string, systemPrompt?: string } } = {};
 
-// Helper to normalize phone numbers
+// Helper to normalize phone numbers (E.164 conversion)
 function normalizePhoneNumber(phone: string): string {
     if (!phone) return '';
-    return phone.replace(/[^\d+]/g, '');
+    // If already potentially E.164 (starts with +), just strip non-digits except +
+    if (phone.trim().startsWith('+')) {
+        return '+' + phone.replace(/\D/g, '');
+    }
+    const digits = phone.replace(/\D/g, '');
+    if (!digits) return '';
+    // 10 digits -> assume US/Canada
+    if (digits.length === 10) return `+1${digits}`;
+    // 11 digits starting with 1 -> assume US/Canada
+    if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+    // Fallback: just prepend +
+    return `+${digits}`;
 }
 
 // Helper to find user config by phone number — with a 3s timeout so TwiML is always returned quickly
@@ -1030,7 +1041,7 @@ wssNote.on('connection', (wsNote: WebSocket) => {
             if (data.type === 'setup') {
                 callSid = data.callSid;
                 const to = data.customParameters?.to || '';
-                const from = data.customParameters?.from || '';
+                const from = normalizePhoneNumber(data.customParameters?.from || '');
                 console.log(`[WS-Note] Setup for call: ${callSid} (To: ${to}, From: ${from})`);
 
                 // Fetch all SMS notes for this user from Firestore
@@ -1155,7 +1166,7 @@ wssSetup.on('connection', (wsSetup: WebSocket) => {
             if (data.type === 'setup') {
                 callSid = data.callSid;
                 const to = data.customParameters?.to || '';
-                callerNumber = data.customParameters?.from || '';
+                callerNumber = normalizePhoneNumber(data.customParameters?.from || '');
                 const callerCity = data.customParameters?.callerCity || '';
                 const callerState = data.customParameters?.callerState || '';
                 const callerCountry = data.customParameters?.callerCountry || '';
@@ -1600,7 +1611,7 @@ wssProjects.on('connection', (wsProjects: WebSocket) => {
             if (data.type === 'setup') {
                 callSid = data.callSid;
                 const to = data.customParameters?.to || '';
-                callerNumber = data.customParameters?.from || '';
+                callerNumber = normalizePhoneNumber(data.customParameters?.from || '');
 
                 console.log(`[WS-Projects] Setup for call: ${callSid} (From: ${callerNumber})`);
 
