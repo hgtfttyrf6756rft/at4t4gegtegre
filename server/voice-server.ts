@@ -532,7 +532,7 @@ const server = http.createServer(async (req, res) => {
     <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay 
             url="${WS_URL}" 
-            welcomeGreeting=""
+            welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
             ttsProvider="${ttsProvider}"
             voice="${voice}"
         >
@@ -809,15 +809,11 @@ wss.on('connection', (wsMain: WebSocket) => {
                 sessions[callSid!] = {
                     contents: [],
                     uid,
+                    toNumber: to,
                     agentInstructions,
                     systemPrompt
                 };
-
-                // Trigger Gemini to start the conversation automatically (replaces TwiML greeting)
-                wsMain.emit('message', JSON.stringify({
-                    type: 'prompt',
-                    textPrompt: "Hello! I'm here. Please start the conversation and introduce yourself based on your instructions."
-                }));
+                // NOTE: No synthetic greeting prompt here — welcomeGreeting is set in TwiML <ConversationRelay>.
 
             } else if (data.type === 'prompt') {
                 if (!callSid || !sessions[callSid]) return;
@@ -830,9 +826,10 @@ wss.on('connection', (wsMain: WebSocket) => {
 
                 try {
                     const firestore = initFirebase();
-                    const userData = (session.uid && firestore) ? await getUserConfig(callerNumber) : null;
-                    const normalizedTarget = normalizePhoneNumber(callerNumber);
-                    const config = userData?.agentPhoneConfigs?.[callerNumber] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
+                    const toNum = (session as any).toNumber || '';
+                    const userData = (session.uid && firestore) ? await getUserConfig(toNum) : null;
+                    const normalizedTarget = normalizePhoneNumber(toNum);
+                    const config = userData?.agentPhoneConfigs?.[toNum] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
                     const leadCaptureEnabled = config?.mode === 'leads' || !!config?.leadCaptureEnabled;
 
                     const result = await ai.models.generateContentStream({
@@ -949,8 +946,14 @@ wss.on('connection', (wsMain: WebSocket) => {
                         }
                     }
 
+                    // Bug Fix: save the model's full reply to session history so the next
+                    // turn has the complete conversation context (prevents re-greeting).
+                    if (responseText) {
+                        session.contents.push({ role: 'model', parts: [{ text: responseText }] });
+                    }
+
                     wsMain.send(JSON.stringify({ type: 'text', token: '', last: true }));
-                    console.log(`[WS] Gemini (${callSid}): ${responseText.substring(0, 80)}`);
+                    console.log(`[WS] Gemini (${callSid}): ${responseText.substring(0, 80)} [history: ${session.contents.length} turns]`);
                 } catch (apiError) {
                     console.error(`[WS] Gemini API Error for ${callSid}:`, apiError);
                     wsMain.send(JSON.stringify({ type: 'text', token: "Sorry, I had an error processing that.", last: true }));
