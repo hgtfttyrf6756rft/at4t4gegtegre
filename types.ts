@@ -54,6 +54,8 @@ export interface PhoneAgentConfig {
   leadDestinationAddress?: string;
   voiceGender?: 'male' | 'female';
   voiceName?: string;
+  humanHandoffEnabled?: boolean;
+  humanHandoffNumber?: string;
 }
 
 export interface UserProfile {
