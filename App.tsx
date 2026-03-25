@@ -305,7 +305,9 @@ const App: React.FC = () => {
         console.error('Google Drive token exchange failed', e);
       } finally {
         if (!cancelled) {
-          if (window.opener && !window.opener.closed) {
+          let hasOpener = false;
+          try { hasOpener = !!(window.opener && !window.opener.closed); } catch (e) { }
+          if (hasOpener) {
             try {
               window.opener.postMessage({ type: 'google-drive:connected' }, window.location.origin);
               window.close();
@@ -382,7 +384,9 @@ const App: React.FC = () => {
         console.error('Google Calendar token exchange failed', e);
       } finally {
         if (!cancelled) {
-          if (window.opener && !window.opener.closed) {
+          let hasOpener = false;
+          try { hasOpener = !!(window.opener && !window.opener.closed); } catch (e) { }
+          if (hasOpener) {
             try {
               window.opener.postMessage({ type: 'google-calendar:connected' }, window.location.origin);
               window.close();
@@ -460,7 +464,9 @@ const App: React.FC = () => {
         console.error('Gmail token exchange failed', e);
       } finally {
         if (!cancelled) {
-          if (window.opener && !window.opener.closed) {
+          let hasOpener = false;
+          try { hasOpener = !!(window.opener && !window.opener.closed); } catch (e) { }
+          if (hasOpener) {
             try {
               window.opener.postMessage({ type: 'gmail:connected' }, window.location.origin);
               window.close();
@@ -526,7 +532,9 @@ const App: React.FC = () => {
         console.error('Outlook exchange failed', e);
       } finally {
         if (!cancelled) {
-          if (window.opener && !window.opener.closed) {
+          let hasOpener = false;
+          try { hasOpener = !!(window.opener && !window.opener.closed); } catch (e) { }
+          if (hasOpener) {
             try {
               window.opener.postMessage({ type: 'outlook:connected' }, window.location.origin);
               window.close();
@@ -600,7 +608,9 @@ const App: React.FC = () => {
         console.error('YouTube token exchange failed', e);
       } finally {
         if (!cancelled) {
-          if (window.opener && !window.opener.closed) {
+          let hasOpener = false;
+          try { hasOpener = !!(window.opener && !window.opener.closed); } catch (e) { }
+          if (hasOpener) {
             try {
               window.opener.postMessage({ type: 'youtube:connected' }, window.location.origin);
               window.close();
@@ -682,7 +692,9 @@ const App: React.FC = () => {
         }
 
         if (!cancelled) {
-          if (window.opener && !window.opener.closed) {
+          let hasOpener = false;
+          try { hasOpener = !!(window.opener && !window.opener.closed); } catch (e) { }
+          if (hasOpener) {
             try {
               window.opener.postMessage({ type: 'linkedin:connected' }, window.location.origin);
               window.close();
@@ -770,7 +782,9 @@ const App: React.FC = () => {
         }
 
         if (!cancelled) {
-          if (window.opener && !window.opener.closed) {
+          let hasOpener = false;
+          try { hasOpener = !!(window.opener && !window.opener.closed); } catch (e) { }
+          if (hasOpener) {
             try {
               window.opener.postMessage({ type: 'x:connected' }, window.location.origin);
               window.close();
