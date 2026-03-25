@@ -268,7 +268,12 @@ export default {
                         const userRef = db.collection('users').doc(uid);
                         await userRef.update({ personalPhoneNumber: phoneNumber });
 
-                        const unclaimedSnap = await db.collection('unclaimedAgents').where('personalPhoneNumber', '==', phoneNumber).get();
+                        // Robustly search for unclaimed agents using variations to handle legacy non-normalized data
+                        const noPlus = phoneNumber.startsWith('+') ? phoneNumber.substring(1) : phoneNumber;
+                        const tenDigits = noPlus.length === 11 && noPlus.startsWith('1') ? noPlus.substring(1) : noPlus;
+                        const searchValues = [...new Set([phoneNumber, noPlus, tenDigits])];
+                        
+                        const unclaimedSnap = await db.collection('unclaimedAgents').where('personalPhoneNumber', 'in', searchValues).get();
                         let claimedCount = 0;
                         
                         if (!unclaimedSnap.empty) {
@@ -299,6 +304,56 @@ export default {
                 }
             } catch (e: any) {
                 console.error('[Verify API]', e);
+                return error(e.message, 500);
+            }
+        }
+
+        // ── Claim Agents ────────────────────────────────────────────────────────
+        if (op === 'claim-agents') {
+            const authHeader = request.headers.get('Authorization');
+            if (!authHeader?.startsWith('Bearer ')) return error('Unauthorized', 401);
+            const token = authHeader.split('Bearer ')[1];
+            
+            try {
+                const decoded = await getAuth(agentService.adminApp()).verifyIdToken(token);
+                const uid = decoded.uid;
+                const db = getFirestore(agentService.adminApp());
+                const userSnap = await db.collection('users').doc(uid).get();
+                const userData = userSnap.data();
+                
+                if (!userData?.personalPhoneNumber) return error('Phone number not verified', 400);
+                
+                const phoneNumber = userData.personalPhoneNumber;
+                const noPlus = phoneNumber.startsWith('+') ? phoneNumber.substring(1) : phoneNumber;
+                const tenDigits = noPlus.length === 11 && noPlus.startsWith('1') ? noPlus.substring(1) : noPlus;
+                const searchValues = [...new Set([phoneNumber, noPlus, tenDigits])];
+                
+                const unclaimedSnap = await db.collection('unclaimedAgents').where('personalPhoneNumber', 'in', searchValues).get();
+                let claimedCount = 0;
+                
+                if (!unclaimedSnap.empty) {
+                    const userRef = db.collection('users').doc(uid);
+                    const newList = [...(userData.agentPhoneNumbersList || [])];
+                    const allConfigs = { ...(userData.agentPhoneConfigs || {}) };
+
+                    for (const doc of unclaimedSnap.docs) {
+                        const twilioNumber = doc.id;
+                        const docData = doc.data();
+                        if (!newList.includes(twilioNumber)) newList.push(twilioNumber);
+                        allConfigs[twilioNumber] = docData.agentPhoneConfig || docData.config;
+                        await doc.ref.delete();
+                        claimedCount++;
+                    }
+
+                    await userRef.update({
+                        agentPhoneNumbersList: newList,
+                        agentPhoneConfigs: allConfigs
+                    });
+                }
+                
+                return json({ success: true, claimedCount });
+            } catch (e: any) {
+                console.error('[claim-agents]', e);
                 return error(e.message, 500);
             }
         }
