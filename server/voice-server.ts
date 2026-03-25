@@ -569,7 +569,7 @@ const server = http.createServer(async (req, res) => {
             const voice2 = parsedUrl2.searchParams.get('voice') || 'en-US-Chirp3-HD-Kore';
             const greeting2 = parsedUrl2.searchParams.get('greeting') || 'Hello! How can I help you today?';
             const agentMode = parsedUrl2.searchParams.get('agentMode') || postData.agentMode as string || 'leads';
-            const WS_LIVE_URL = DOMAIN ? `wss://${DOMAIN}/ws-live` : `ws://localhost:${PORT}/ws-live`;
+            // WS_LIVE_URL is a global const — no need to re-declare here
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
