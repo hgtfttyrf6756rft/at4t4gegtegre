@@ -527,18 +527,48 @@ const server = http.createServer(async (req, res) => {
                 return;
             }
 
+            // Route to Gemini Live API bridge (raw audio stream, lowest latency)
+            const liveHandlerUrl = DOMAIN ? `https://${DOMAIN}/twiml-live` : `http://localhost:${PORT}/twiml-live`;
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect action="${APP_URL}/api/agent?op=webhook">
-        <ConversationRelay 
-            url="${WS_URL}" 
-            welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
-            ttsProvider="${ttsProvider}"
-            voice="${voice}"
-        >
-            <Parameter name="to" value="${escapeXmlAttr(to)}" />
-            <Parameter name="from" value="${escapeXmlAttr(from)}" />
-        </ConversationRelay>
+    <Redirect method="POST">${liveHandlerUrl}?to=${encodeURIComponent(to)}&amp;from=${encodeURIComponent(from)}&amp;voice=${encodeURIComponent(voice)}&amp;greeting=${encodeURIComponent(welcomeGreeting)}</Redirect>
+</Response>`;
+            res.writeHead(200, { 'Content-Type': 'text/xml' });
+            res.end(xmlResponse);
+        });
+        return;
+    }
+
+    // GET /twiml-live — health probe
+    if (req.method === 'GET' && pathname === '/twiml-live') {
+        res.writeHead(200, { 'Content-Type': 'text/xml' });
+        res.end(`<?xml version="1.0" encoding="UTF-8"?><Response><Say>Gemini Live voice server is running.</Say></Response>`);
+        return;
+    }
+
+    // POST /twiml-live — Issues a <Connect><Stream> to bridge raw audio to Gemini Live
+    if (req.method === 'POST' && pathname === '/twiml-live') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', () => {
+            const postData = querystring.parse(body);
+            // Accept params from both query string (when redirected from /twiml) and POST body
+            const parsedUrl2 = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
+            const to2 = parsedUrl2.searchParams.get('to') || postData.To as string || '';
+            const from2 = parsedUrl2.searchParams.get('from') || postData.From as string || '';
+            const voice2 = parsedUrl2.searchParams.get('voice') || 'en-US-Chirp3-HD-Kore';
+            const greeting2 = parsedUrl2.searchParams.get('greeting') || 'Hello! How can I help you today?';
+            const WS_LIVE_URL = DOMAIN ? `wss://${DOMAIN}/ws-live` : `ws://localhost:${PORT}/ws-live`;
+
+            const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Connect>
+        <Stream url="${WS_LIVE_URL}">
+            <Parameter name="to" value="${escapeXmlAttr(to2)}" />
+            <Parameter name="from" value="${escapeXmlAttr(from2)}" />
+            <Parameter name="voice" value="${escapeXmlAttr(voice2)}" />
+            <Parameter name="greeting" value="${escapeXmlAttr(greeting2)}" />
+        </Stream>
     </Connect>
 </Response>`;
             res.writeHead(200, { 'Content-Type': 'text/xml' });
@@ -705,6 +735,7 @@ const wssNote = new WebSocketServer({ noServer: true });
 const wssSetup = new WebSocketServer({ noServer: true });
 const wssProjects = new WebSocketServer({ noServer: true });
 const wssMedia = new WebSocketServer({ noServer: true });
+const wssLive = new WebSocketServer({ noServer: true }); // Gemini Live API audio bridge
 
 server.on('upgrade', (request, socket, head) => {
     const pathname = url.parse(request.url || '').pathname;
@@ -728,6 +759,10 @@ server.on('upgrade', (request, socket, head) => {
     } else if (pathname === '/ws-media') {
         wssMedia.handleUpgrade(request, socket, head, (ws) => {
             wssMedia.emit('connection', ws, request);
+        });
+    } else if (pathname === '/ws-live') {
+        wssLive.handleUpgrade(request, socket, head, (ws) => {
+            wssLive.emit('connection', ws, request);
         });
     } else {
         socket.destroy();
@@ -1767,7 +1802,296 @@ wssMedia.on('connection', (wsTwilio: WebSocket) => {
     });
 });
 
+
+// ─── Gemini Live API Bridge WebSocket (/ws-live) ──────────────────────────────
+// Bridges Twilio raw Media Streams (8kHz mulaw) ↔ Gemini Live API (16kHz/24kHz PCM).
+// This replaces ConversationRelay for the main leads agent, providing native VAD,
+// interruption handling, and sub-500ms response latency.
+wssLive.on('connection', (wsTwilio: WebSocket) => {
+    let streamSid: string | null = null;
+    let callSid: string | null = null;
+    let callerNumber: string = '';
+    let toNumber: string = '';
+    let geminiSession: any = null;
+    let uid: string = '';
+    let systemPrompt: string = DEFAULT_SYSTEM_PROMPT;
+    let agentConfig: any = null;
+    const messageQueue: any[] = [];
+    let sessionReady = false;
+
+    console.log('[WS-Live] Twilio connected (Gemini Live bridge)');
+
+    // Helper: flush queued Gemini messages when session is ready
+    async function processQueue() {
+        while (messageQueue.length > 0 && geminiSession) {
+            const msg = messageQueue.shift();
+            try { geminiSession.sendRealtimeInput(msg); } catch (_) {}
+        }
+    }
+
+    wsTwilio.on('message', async (rawMessage: Buffer | string) => {
+        try {
+            const data = JSON.parse(rawMessage.toString());
+
+            // ── 1. Stream Start ──────────────────────────────────────────────
+            if (data.event === 'start') {
+                streamSid = data.start?.streamSid || null;
+                callSid = data.start?.callSid || null;
+                const customParams = data.start?.customParameters || {};
+                toNumber = customParams.to || '';
+                callerNumber = customParams.from || '';
+                const configuredVoice = customParams.voice || 'Kore';
+                const greeting = customParams.greeting || 'Hello! How can I help you today?';
+
+                console.log(`[WS-Live] Stream started: ${streamSid} (call: ${callSid}, to: ${toNumber})`);
+
+                // Load user config and system prompt
+                try {
+                    const userData = await getUserConfig(toNumber);
+                    const normalizedTo = normalizePhoneNumber(toNumber);
+                    agentConfig = userData?.agentPhoneConfigs?.[toNumber]
+                        || userData?.agentPhoneConfigs?.[normalizedTo]
+                        || userData?.agentPhoneConfig;
+                    uid = userData?.uid || '';
+
+                    if (agentConfig?.enabled) {
+                        let customInstructions = agentConfig.systemPrompt || '';
+                        if ((agentConfig.mode === 'leads' || agentConfig.leadCaptureEnabled) && agentConfig.leadFields?.length > 0) {
+                            const fields = agentConfig.leadFields.map((f: any) => `${f.name}${f.required ? ' (required)' : ''}`).join(', ');
+                            customInstructions += `\n\nLEAD CAPTURE TASK: Your primary goal is to politely collect the following information from the caller: ${fields}. Once you have collected the required information, call the 'saveCapturedLead' tool. Be natural and conversational.`;
+                            if (agentConfig.appointmentBookingEnabled) {
+                                customInstructions += `\n\nAPPOINTMENT BOOKING: After collecting the caller's information, offer to book an appointment. Ask what date and time works best, then call the 'bookAppointment' tool.`;
+                            }
+                        }
+                        systemPrompt = `${DEFAULT_SYSTEM_PROMPT}\n\nUSER'S AGENT INSTRUCTIONS: ${customInstructions}`;
+                    }
+                } catch (configErr) {
+                    console.error('[WS-Live] Error loading user config:', configErr);
+                }
+
+                // Resolve Gemini voice name (strip Chirp3 prefix if present for Live API)
+                let voiceName = configuredVoice;
+                if (voiceName.startsWith('en-US-Chirp3-HD-')) {
+                    voiceName = voiceName.replace('en-US-Chirp3-HD-', '');
+                }
+                // Fall back to a sane default if it's a Journey voice (not supported by Live API)
+                if (voiceName.startsWith('en-US-Journey')) {
+                    voiceName = 'Kore';
+                }
+
+                const leadCaptureEnabled = agentConfig?.mode === 'leads' || !!agentConfig?.leadCaptureEnabled;
+
+                // Open Gemini Live session
+                try {
+                    const liveConfig = {
+                        responseModalities: ['AUDIO'],
+                        systemInstruction: systemPrompt,
+                        speechConfig: {
+                            voiceConfig: { prebuiltVoiceConfig: { voiceName } }
+                        },
+                        tools: leadCaptureEnabled ? [leadCaptureTool] : [],
+                        inputAudioTranscription: {},   // log what caller says
+                        outputAudioTranscription: {},  // log what agent says
+                    };
+
+                    geminiSession = await (ai as any).live.connect({
+                        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
+                        config: liveConfig,
+                        callbacks: {
+                            onopen: () => {
+                                console.log(`[WS-Live] Gemini session open for call ${callSid}`);
+                                sessionReady = true;
+                                processQueue();
+                                // Kick off the greeting via text so Gemini speaks it
+                                geminiSession.sendClientContent({
+                                    turns: [{ role: 'user', parts: [{ text: `Please greet the caller now. Use this greeting: "${greeting}"` }] }],
+                                    turnComplete: true
+                                });
+                            },
+                            onmessage: async (msg: any) => {
+                                // ── Audio response → send to Twilio ──────────
+                                const parts = msg?.serverContent?.modelTurn?.parts || [];
+                                for (const part of parts) {
+                                    if (part?.inlineData?.data && !streamSid) continue;
+                                    if (part?.inlineData?.data) {
+                                        try {
+                                            const pcm24 = new Int16Array(Buffer.from(part.inlineData.data, 'base64').buffer);
+                                            const pcm8 = audioUtils.resample24To8(pcm24);
+                                            const mulaw = audioUtils.pcmToMulaw(pcm8);
+                                            wsTwilio.send(JSON.stringify({
+                                                event: 'media',
+                                                streamSid,
+                                                media: { payload: Buffer.from(mulaw).toString('base64') }
+                                            }));
+                                        } catch (audioErr) {
+                                            console.error('[WS-Live] Audio conversion error:', audioErr);
+                                        }
+                                    }
+                                }
+
+                                // ── Transcription logging ─────────────────────
+                                if (msg?.serverContent?.inputTranscription?.text) {
+                                    console.log(`[WS-Live] Caller said: ${msg.serverContent.inputTranscription.text}`);
+                                }
+                                if (msg?.serverContent?.outputTranscription?.text) {
+                                    console.log(`[WS-Live] Agent said: ${msg.serverContent.outputTranscription.text}`);
+                                }
+
+                                // ── Interruption → clear Twilio audio buffer ──
+                                if (msg?.serverContent?.interrupted && streamSid) {
+                                    wsTwilio.send(JSON.stringify({ event: 'clear', streamSid }));
+                                    console.log(`[WS-Live] Interruption detected — cleared Twilio buffer`);
+                                }
+
+                                // ── Tool calls ────────────────────────────────
+                                if (msg?.toolCall?.functionCalls) {
+                                    const toolResponses: any[] = [];
+                                    for (const call of msg.toolCall.functionCalls) {
+                                        console.log(`[WS-Live] Tool call: ${call.name}`, call.args);
+                                        let result: any = { success: false };
+
+                                        if (call.name === 'saveCapturedLead') {
+                                            const firestore = initFirebase();
+                                            if (uid && firestore) {
+                                                try {
+                                                    await firestore.collection('users').doc(uid).collection('phoneAgentLeads').add({
+                                                        callerNumber,
+                                                        data: (call.args as any).data,
+                                                        timestamp: Date.now()
+                                                    });
+                                                    result = { success: true };
+                                                } catch (fsErr) {
+                                                    console.error('[WS-Live] Error saving lead:', fsErr);
+                                                }
+                                            }
+                                        } else if (call.name === 'transferToHuman') {
+                                            // Signal Twilio to end the stream so the call falls through to <Say>
+                                            result = { success: true };
+                                            // Close session gracefully — call will fall through to /twiml-handoff
+                                            setTimeout(() => {
+                                                if (geminiSession) geminiSession.close();
+                                                wsTwilio.close();
+                                            }, 1500);
+                                        } else if (call.name === 'bookAppointment') {
+                                            const apptArgs = call.args as any;
+                                            try {
+                                                const agentUserData = await getUserConfig(toNumber);
+                                                const normalizedTo2 = normalizePhoneNumber(toNumber);
+                                                const agentCfg = agentUserData?.agentPhoneConfigs?.[toNumber] || agentUserData?.agentPhoneConfigs?.[normalizedTo2] || agentUserData?.agentPhoneConfig;
+                                                if (agentCfg?.appointmentBookingEnabled && agentUserData?.uid) {
+                                                    const firestore3 = initFirebase();
+                                                    if (firestore3) {
+                                                        const calTokenSnap = await firestore3.doc(`users/${agentUserData.uid}/integrations/googleCalendar`).get();
+                                                        const refreshToken = calTokenSnap?.data()?.refreshToken;
+                                                        if (refreshToken) {
+                                                            const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID || '';
+                                                            const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET || '';
+                                                            const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+                                                                method: 'POST',
+                                                                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                                                body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }).toString(),
+                                                            });
+                                                            if (tokenRes.ok) {
+                                                                const tokenJson: any = await tokenRes.json();
+                                                                const startMs = new Date(apptArgs.dateTimeIso).getTime();
+                                                                const endMs = startMs + (apptArgs.durationMinutes || 60) * 60 * 1000;
+                                                                const calRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events`, {
+                                                                    method: 'POST',
+                                                                    headers: { Authorization: `Bearer ${tokenJson.access_token}`, 'Content-Type': 'application/json' },
+                                                                    body: JSON.stringify({
+                                                                        summary: `📞 Appointment – ${callerNumber}`,
+                                                                        description: `Booked via phone agent.\n\n${apptArgs.notes}`,
+                                                                        start: { dateTime: new Date(startMs).toISOString() },
+                                                                        end: { dateTime: new Date(endMs).toISOString() },
+                                                                    }),
+                                                                });
+                                                                if (calRes.ok) result = { success: true, eventId: (await calRes.json()).id };
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            } catch (bookErr) {
+                                                console.error('[WS-Live] bookAppointment error:', bookErr);
+                                            }
+                                        }
+
+                                        toolResponses.push({
+                                            id: call.id,
+                                            name: call.name,
+                                            response: result
+                                        });
+                                    }
+                                    // Send all tool responses back to Gemini
+                                    try {
+                                        geminiSession.sendToolResponse({ functionResponses: toolResponses });
+                                    } catch (trErr) {
+                                        console.error('[WS-Live] sendToolResponse error:', trErr);
+                                    }
+                                }
+                            },
+                            onerror: (e: any) => {
+                                console.error('[WS-Live] Gemini session error:', e?.message || e);
+                            },
+                            onclose: (e: any) => {
+                                console.log('[WS-Live] Gemini session closed:', e?.reason || '');
+                                geminiSession = null;
+                            }
+                        }
+                    });
+                } catch (connectErr) {
+                    console.error('[WS-Live] Failed to connect to Gemini Live:', connectErr);
+                    wsTwilio.close();
+                }
+
+            // ── 2. Inbound audio from Twilio → forward to Gemini ────────────
+            } else if (data.event === 'media') {
+                if (data.media?.track === 'inbound' && data.media?.payload) {
+                    const audioMsg = (() => {
+                        try {
+                            const mulaw = Buffer.from(data.media.payload, 'base64');
+                            const pcm8 = audioUtils.mulawToPcm(mulaw);
+                            const pcm16 = audioUtils.resample8To16(pcm8);
+                            return {
+                                audio: {
+                                    data: Buffer.from(pcm16.buffer).toString('base64'),
+                                    mimeType: 'audio/pcm;rate=16000'
+                                }
+                            };
+                        } catch { return null; }
+                    })();
+
+                    if (audioMsg) {
+                        if (sessionReady && geminiSession) {
+                            try { geminiSession.sendRealtimeInput(audioMsg); } catch (_) {}
+                        } else {
+                            // Buffer up to 50 chunks while session is initialising
+                            if (messageQueue.length < 50) messageQueue.push(audioMsg);
+                        }
+                    }
+                }
+
+            // ── 3. Stream stopped ────────────────────────────────────────────
+            } else if (data.event === 'stop') {
+                console.log(`[WS-Live] Twilio stream stopped: ${streamSid}`);
+                if (geminiSession) { try { geminiSession.close(); } catch (_) {} }
+            }
+        } catch (err) {
+            console.error('[WS-Live] Message handler error:', err);
+        }
+    });
+
+    wsTwilio.on('close', () => {
+        console.log(`[WS-Live] Twilio WebSocket closed for stream: ${streamSid}`);
+        if (geminiSession) { try { geminiSession.close(); } catch (_) {} }
+    });
+
+    wsTwilio.on('error', (err) => {
+        console.error('[WS-Live] Twilio WebSocket error:', err);
+    });
+});
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
+
 // IMPORTANT: Start listening FIRST, before Firebase init.
 // This ensures the server meets Twilio's 15s window even on cold starts.
 server.listen(PORT, '0.0.0.0', () => {
