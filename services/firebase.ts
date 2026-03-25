@@ -6,8 +6,10 @@ import {
   doc,
   setDoc,
   getDoc,
+  getDocFromServer,
   collection,
   getDocs,
+  getDocsFromServer,
   deleteDoc,
   updateDoc,
   deleteField,
@@ -46,6 +48,7 @@ export const auth = getAuth(app);
 export const analytics = getAnalytics(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export { getDocFromServer, getDocsFromServer };
 
 // Helper function to sanitize data for Firestore (removes undefined values recursively)
 // Preserves Firestore FieldValue sentinels (like serverTimestamp()) and handles special objects
@@ -223,7 +226,8 @@ export const updateUserProfileInFirestore = async (uid: string, data: {
 export const getUserFromFirestore = async (uid: string): Promise<FirestoreUser | null> => {
   try {
     const userRef = doc(db, "users", uid);
-    const userDoc = await getDoc(userRef);
+    // Use getDocFromServer to bypass local cache and see console changes immediately
+    const userDoc = await getDocFromServer(userRef);
 
     if (userDoc.exists()) {
       return userDoc.data() as FirestoreUser;
