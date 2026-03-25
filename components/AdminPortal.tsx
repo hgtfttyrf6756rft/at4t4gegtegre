@@ -151,6 +151,124 @@ const DispatchPopover: React.FC<DispatchPopoverProps> = ({ user, projectId, owne
     );
 };
 
+// ─── Edit User Modal ───────────────────────────────────────────────────
+
+interface EditUserModalProps {
+    user: User;
+    targetUser: FirestoreUser;
+    onClose: () => void;
+    onUpdated: () => void;
+    isDarkMode: boolean;
+}
+
+const EditUserModal: React.FC<EditUserModalProps> = ({ user, targetUser, onClose, onUpdated, isDarkMode }) => {
+    const [credits, setCredits] = useState(targetUser.credits || 0);
+    const [subscribed, setSubscribed] = useState(targetUser.subscribed || false);
+    const [unlimited, setUnlimited] = useState(targetUser.unlimited || false);
+    const [tier, setTier] = useState(targetUser.subscriptionTier || 'pro');
+    const [displayName, setDisplayName] = useState(targetUser.displayName || '');
+    const [saving, setSaving] = useState(false);
+
+    const handleSave = async () => {
+        setSaving(true);
+        try {
+            const token = await user.getIdToken();
+            await authFetch('/api/admin-tools', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                    tool: 'update_user',
+                    args: {
+                        userId: targetUser.uid,
+                        updates: {
+                            credits,
+                            subscribed,
+                            unlimited,
+                            subscriptionTier: tier,
+                            displayName
+                        }
+                    }
+                }),
+            });
+            onUpdated();
+            onClose();
+        } catch (e) {
+            console.error('[EditUser] Failed:', e);
+            alert('Failed to update user');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <div className={`w-full max-w-md rounded-2xl shadow-2xl border ${isDarkMode ? 'bg-[#18181A] border-[#2E2E32]' : 'bg-white border-gray-200'}`}>
+                <div className="flex items-center justify-between p-6 border-b border-gray-100 dark:border-[#2E2E32]">
+                    <h3 className="text-lg font-semibold">Edit User</h3>
+                    <button onClick={onClose} className="text-gray-500 hover:text-gray-300"><XIcon /></button>
+                </div>
+                <div className="p-6 space-y-4">
+                    <div>
+                        <label className="block text-xs font-medium text-gray-400 uppercase mb-1">Display Name</label>
+                        <input
+                            value={displayName}
+                            onChange={e => setDisplayName(e.target.value)}
+                            className={`w-full px-3 py-2 rounded-lg border text-sm outline-none ${isDarkMode ? 'bg-[#0f0f11] border-[#2E2E32] text-white' : 'bg-gray-50 border-gray-200 text-gray-900'}`}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-400 uppercase mb-1">Credits</label>
+                        <input
+                            type="number"
+                            value={credits}
+                            onChange={e => setCredits(parseInt(e.target.value) || 0)}
+                            className={`w-full px-3 py-2 rounded-lg border text-sm outline-none ${isDarkMode ? 'bg-[#0f0f11] border-[#2E2E32] text-white' : 'bg-gray-50 border-gray-200 text-gray-900'}`}
+                        />
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium">Subscribed</label>
+                        <input
+                            type="checkbox"
+                            checked={subscribed}
+                            onChange={e => setSubscribed(e.target.checked)}
+                            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                        />
+                    </div>
+                    <div className="flex items-center justify-between">
+                        <label className="text-sm font-medium">Unlimited Plan</label>
+                        <input
+                            type="checkbox"
+                            checked={unlimited}
+                            onChange={e => setUnlimited(e.target.checked)}
+                            className="w-4 h-4 text-purple-600 rounded focus:ring-purple-500"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-400 uppercase mb-1">Tier</label>
+                        <select
+                            value={tier}
+                            onChange={e => setTier(e.target.value as any)}
+                            className={`w-full px-3 py-2 rounded-lg border text-sm outline-none ${isDarkMode ? 'bg-[#0f0f11] border-[#2E2E32] text-white' : 'bg-gray-50 border-gray-200 text-gray-900'}`}
+                        >
+                            <option value="pro">Pro</option>
+                            <option value="unlimited">Unlimited</option>
+                        </select>
+                    </div>
+                </div>
+                <div className="p-6 pt-0">
+                    <button
+                        onClick={handleSave}
+                        disabled={saving}
+                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg disabled:opacity-50 transition-colors"
+                    >
+                        {saving ? 'Saving...' : 'Save Changes'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 // ─── Main AdminPortal Component ─────────────────────────────────────────
 
 export const AdminPortal: React.FC<AdminPortalProps> = ({ user, onNavigateToProject, onBack, isDarkMode }) => {
@@ -177,6 +295,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ user, onNavigateToProj
     const [priorityFilter, setPriorityFilter] = useState<ProjectTask['priority'] | 'all'>('all');
 
     const [dispatchOpen, setDispatchOpen] = useState<string | null>(null); // projectId
+    const [editingUser, setEditingUser] = useState<FirestoreUser | null>(null);
 
     useEffect(() => {
         if (user.email !== 'contact.mngrm@gmail.com') return;
@@ -205,6 +324,20 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ user, onNavigateToProj
         };
         loadData();
     }, [user]);
+
+    const handleRefresh = async () => {
+        setLoading(true);
+        try {
+            const [fetchedUsers, fetchedProjects] = await Promise.all([
+                getAllUsersForAdmin(),
+                getAllProjectsForAdmin(),
+            ]);
+            setUsers(fetchedUsers);
+            setProjects(fetchedProjects);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // Subscribe to global activity stream
     useEffect(() => {
@@ -631,9 +764,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ user, onNavigateToProj
                                                             <h3 className="font-medium text-sm">{u.email || 'No email provided'}</h3>
                                                             <p className={`text-xs mt-1 ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>
                                                                 UID: {u.uid} {u.displayName ? `· Name: ${u.displayName}` : ''}
+                                                                {u.credits !== undefined && ` · Credits: ${u.credits}`}
+                                                                {u.subscribed && ` · ✅ Subscribed`}
                                                             </p>
                                                         </div>
                                                     </div>
+                                                    <button
+                                                        onClick={() => setEditingUser(u)}
+                                                        className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-all ${isDarkMode ? 'border-[#3F3F46] hover:bg-[#2E2E32] text-gray-300' : 'border-gray-200 hover:bg-gray-50 text-gray-600'}`}
+                                                    >
+                                                        Edit
+                                                    </button>
                                                 </div>
                                             ))}
                                         </div>
@@ -644,6 +785,17 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ user, onNavigateToProj
                     )}
                 </div>
             </div>
+
+            {/* Modals */}
+            {editingUser && (
+                <EditUserModal
+                    user={user}
+                    targetUser={editingUser}
+                    onClose={() => setEditingUser(null)}
+                    onUpdated={handleRefresh}
+                    isDarkMode={isDarkMode}
+                />
+            )}
         </div>
     );
 };
