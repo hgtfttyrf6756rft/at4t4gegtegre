@@ -824,6 +824,38 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                                                             {activeConfig.leadDestination === 'email' ? "Leads will be emailed to you immediately." : activeConfig.leadDestination === 'sms' ? "Leads will be texted to your phone immediately." : "Leads will be saved and visible below in 'Captured Leads'."}
                                                                         </p>
                                                                     </div>
+
+                                                                    {/* Human Handoff */}
+                                                                    <div className="pt-2 border-t border-[#3a3a3c]/30 pb-2">
+                                                                        <div className="flex items-center justify-between mb-3 mt-2">
+                                                                            <label className={`text-xs font-semibold ${ui.label}`}>Human Handoff (Call Transfer)</label>
+                                                                            <label className="flex items-center gap-3 cursor-pointer">
+                                                                                <div className="relative">
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        className="sr-only peer"
+                                                                                        checked={activeConfig.humanHandoffEnabled || false}
+                                                                                        onChange={e => updateActivePhoneConfig({ humanHandoffEnabled: e.target.checked })}
+                                                                                    />
+                                                                                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                                                                </div>
+                                                                            </label>
+                                                                        </div>
+                                                                        {activeConfig.humanHandoffEnabled && (
+                                                                            <div>
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={activeConfig.humanHandoffNumber || ''}
+                                                                                    onChange={e => updateActivePhoneConfig({ humanHandoffNumber: e.target.value })}
+                                                                                    placeholder="Enter phone number to forward to"
+                                                                                    className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`}
+                                                                                />
+                                                                                <p className={`mt-2 text-[10px] ${ui.subtext}`}>
+                                                                                    Callers can be transferred to this number during the call.
+                                                                                </p>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
                                                                 </div>
                                                             </div>
                                                         )}
