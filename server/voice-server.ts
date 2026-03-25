@@ -397,6 +397,9 @@ async function sendSms(to: string, from: string, body: string): Promise<void> {
 }
 
 const server = http.createServer(async (req, res) => {
+    // Log all incoming requests for debugging
+    console.log(`[HTTP] ${req.method} ${req.url}`);
+
     // Safely parse URL to ignore query strings added by Twilio
     const parsedUrl = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
     let pathname = parsedUrl.pathname;
@@ -476,16 +479,22 @@ const server = http.createServer(async (req, res) => {
             console.log(`[TwiML] Incoming call to ${to} from ${from}`);
 
             // Setup Mode Trigger (Strictly for setup agents per user request)
-            // Checked FIRST to avoid any expensive Firestore lookups or initializations
             if (to === '+16474904049') {
-                const targetUrl = DOMAIN ? `https://${DOMAIN}/twiml-setup` : `http://localhost:${PORT}/twiml-setup`;
-                const xmlRedirect = `<?xml version="1.0" encoding="UTF-8"?>
+                console.log(`[TwiML] Setup number detected. Responding with Connect Stream.`);
+                const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Redirect method="POST">${targetUrl}</Redirect>
+    <Say>Connecting to the Freshfront setup assistant.</Say>
+    <Connect>
+        <Stream url="${WS_LIVE_URL}">
+            <Parameter name="to" value="${escapeXmlAttr(to)}" />
+            <Parameter name="from" value="${escapeXmlAttr(from)}" />
+            <Parameter name="agentMode" value="setup" />
+            <Parameter name="greeting" value="Hi! Welcome to the Freshfront agent setup assistant. Which type of phone agent would you like to create today?" />
+        </Stream>
+    </Connect>
 </Response>`;
-                console.log(`[TwiML] Setup number detected. Redirecting instantly to ${targetUrl}.`);
                 res.writeHead(200, { 'Content-Type': 'text/xml' });
-                res.end(xmlRedirect);
+                res.end(xmlResponse);
                 return;
             }
 
