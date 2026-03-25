@@ -23,6 +23,7 @@ if (!DOMAIN) {
 const WS_URL = DOMAIN ? `wss://${DOMAIN}/ws` : `ws://localhost:${PORT}/ws`;
 const WS_URL_FOR_HEALTH = WS_URL;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://www.freshfront.co';
+const WS_LIVE_URL = DOMAIN ? `wss://${DOMAIN}/ws-live` : `ws://localhost:${PORT}/ws-live`;
 
 const WELCOME_GREETING = "Hi! I am a voice assistant powered by Twilio and Google Gemini. Ask me anything!";
 
@@ -531,7 +532,7 @@ const server = http.createServer(async (req, res) => {
             const liveHandlerUrl = DOMAIN ? `https://${DOMAIN}/twiml-live` : `http://localhost:${PORT}/twiml-live`;
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Redirect method="POST">${liveHandlerUrl}?to=${encodeURIComponent(to)}&amp;from=${encodeURIComponent(from)}&amp;voice=${encodeURIComponent(voice)}&amp;greeting=${encodeURIComponent(welcomeGreeting)}</Redirect>
+    <Redirect method="POST">${liveHandlerUrl}?to=${encodeURIComponent(to)}&amp;from=${encodeURIComponent(from)}&amp;voice=${encodeURIComponent(voice)}&amp;greeting=${encodeURIComponent(welcomeGreeting)}&amp;agentMode=leads</Redirect>
 </Response>`;
             res.writeHead(200, { 'Content-Type': 'text/xml' });
             res.end(xmlResponse);
@@ -558,6 +559,7 @@ const server = http.createServer(async (req, res) => {
             const from2 = parsedUrl2.searchParams.get('from') || postData.From as string || '';
             const voice2 = parsedUrl2.searchParams.get('voice') || 'en-US-Chirp3-HD-Kore';
             const greeting2 = parsedUrl2.searchParams.get('greeting') || 'Hello! How can I help you today?';
+            const agentMode = parsedUrl2.searchParams.get('agentMode') || postData.agentMode as string || 'leads';
             const WS_LIVE_URL = DOMAIN ? `wss://${DOMAIN}/ws-live` : `ws://localhost:${PORT}/ws-live`;
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
@@ -568,6 +570,7 @@ const server = http.createServer(async (req, res) => {
             <Parameter name="from" value="${escapeXmlAttr(from2)}" />
             <Parameter name="voice" value="${escapeXmlAttr(voice2)}" />
             <Parameter name="greeting" value="${escapeXmlAttr(greeting2)}" />
+            <Parameter name="agentMode" value="${escapeXmlAttr(agentMode)}" />
         </Stream>
     </Connect>
 </Response>`;
@@ -593,38 +596,31 @@ const server = http.createServer(async (req, res) => {
             const to = postData.To as string || '';
             const from = postData.From as string || '';
 
-            const WS_NOTE_URL = DOMAIN ? `wss://${DOMAIN}/ws-note` : `ws://localhost:${PORT}/ws-note`;
-
-            let welcomeGreeting = 'Hello! How can I help you today? You can ask me about anything you have noted down.';
+            let welcomeGreeting = 'Hello! How can I help with your notes today?';
             let voice = 'en-US-Journey-F';
 
             try {
                 const userData = await getUserConfig(to);
                 const normalizedTarget = normalizePhoneNumber(to);
                 const activeConfig = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
-                
                 if (activeConfig?.enabled) {
-                    welcomeGreeting = activeConfig.systemPrompt 
-                        ? (activeConfig.welcomeGreeting || welcomeGreeting)
-                        : welcomeGreeting;
                     voice = resolveVoice(activeConfig);
+                    welcomeGreeting = activeConfig.welcomeGreeting || welcomeGreeting;
                 }
             } catch (e) {
-                console.error('[TwiML-Note] Error fetching user config:', e);
+                console.error('[TwiML-Note] Error:', e);
             }
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect action="${APP_URL}/api/agent?op=webhook">
-        <ConversationRelay 
-            url="${WS_NOTE_URL}" 
-             welcomeGreeting="Hi, I'm calling for my notes assistant. How can I help with your notes today?"
-            ttsProvider="Google"
-            voice="${voice}"
-        >
+    <Connect>
+        <Stream url="${WS_LIVE_URL}">
             <Parameter name="to" value="${escapeXmlAttr(to)}" />
             <Parameter name="from" value="${escapeXmlAttr(from)}" />
-        </ConversationRelay>
+            <Parameter name="agentMode" value="note" />
+            <Parameter name="voice" value="${voice}" />
+            <Parameter name="greeting" value="${escapeXmlAttr(welcomeGreeting)}" />
+        </Stream>
     </Connect>
 </Response>`;
             res.writeHead(200, { 'Content-Type': 'text/xml' });
@@ -652,25 +648,18 @@ const server = http.createServer(async (req, res) => {
             const callerState = postData.CallerState as string || '';
             const callerCountry = postData.CallerCountry as string || '';
             
-            console.log(`[TwiML-Setup] Received redirect for call to ${to} from ${from} (${callerCity}, ${callerState})`);
-
-            const WS_SETUP_URL = DOMAIN ? `wss://${DOMAIN}/ws-setup` : `ws://localhost:${PORT}/ws-setup`;
-
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect action="${APP_URL}/api/agent?op=webhook">
-        <ConversationRelay 
-            url="${WS_SETUP_URL}" 
-             welcomeGreeting="Hi! Welcome to the Freshfront agent setup assistant. Which type of phone agent would you like to create today?"
-            ttsProvider="Google"
-            voice="en-US-Journey-F"
-        >
+    <Connect>
+        <Stream url="${WS_LIVE_URL}">
             <Parameter name="to" value="${escapeXmlAttr(to)}" />
             <Parameter name="from" value="${escapeXmlAttr(from)}" />
+            <Parameter name="agentMode" value="setup" />
             <Parameter name="callerCity" value="${escapeXmlAttr(callerCity)}" />
             <Parameter name="callerState" value="${escapeXmlAttr(callerState)}" />
             <Parameter name="callerCountry" value="${escapeXmlAttr(callerCountry)}" />
-        </ConversationRelay>
+            <Parameter name="greeting" value="Hi! Welcome to the Freshfront agent setup assistant. Which type of phone agent would you like to create today?" />
+        </Stream>
     </Connect>
 </Response>`;
             res.writeHead(200, { 'Content-Type': 'text/xml' });
@@ -694,20 +683,16 @@ const server = http.createServer(async (req, res) => {
             const postData = querystring.parse(body);
             const to = postData.To as string || '';
             const from = postData.From as string || '';
-            const WS_PROJECTS_URL = DOMAIN ? `wss://${DOMAIN}/ws-projects` : `ws://localhost:${PORT}/ws-projects`;
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect action="${APP_URL}/api/agent?op=webhook">
-        <ConversationRelay
-            url="${WS_PROJECTS_URL}"
-            welcomeGreeting="Hi! I'm calling for your project assistant. How can I help you manage your projects today?"
-            ttsProvider="Google"
-            voice="en-US-Journey-F"
-        >
+    <Connect>
+        <Stream url="${WS_LIVE_URL}">
             <Parameter name="to" value="${escapeXmlAttr(to)}" />
             <Parameter name="from" value="${escapeXmlAttr(from)}" />
-        </ConversationRelay>
+            <Parameter name="agentMode" value="projects" />
+            <Parameter name="greeting" value="Hi! I'm calling for your project assistant. How can I help you manage your projects today?" />
+        </Stream>
     </Connect>
 </Response>`;
             res.writeHead(200, { 'Content-Type': 'text/xml' });
@@ -730,37 +715,12 @@ const server = http.createServer(async (req, res) => {
 
 
 // ─── WebSocket Server ─────────────────────────────────────────────────────────
-const wss = new WebSocketServer({ noServer: true });
-const wssNote = new WebSocketServer({ noServer: true });
-const wssSetup = new WebSocketServer({ noServer: true });
-const wssProjects = new WebSocketServer({ noServer: true });
-const wssMedia = new WebSocketServer({ noServer: true });
-const wssLive = new WebSocketServer({ noServer: true }); // Gemini Live API audio bridge
+// Unified Gemini Multimodal Live API Bridge
+const wssLive = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
-    const pathname = url.parse(request.url || '').pathname;
-
-    if (pathname === '/ws') {
-        wss.handleUpgrade(request, socket, head, (ws) => {
-            wss.emit('connection', ws, request);
-        });
-    } else if (pathname === '/ws-note') {
-        wssNote.handleUpgrade(request, socket, head, (ws) => {
-            wssNote.emit('connection', ws, request);
-        });
-    } else if (pathname === '/ws-setup') {
-        wssSetup.handleUpgrade(request, socket, head, (ws) => {
-            wssSetup.emit('connection', ws, request);
-        });
-    } else if (pathname === '/ws-projects') {
-        wssProjects.handleUpgrade(request, socket, head, (ws) => {
-            wssProjects.emit('connection', ws, request);
-        });
-    } else if (pathname === '/ws-media') {
-        wssMedia.handleUpgrade(request, socket, head, (ws) => {
-            wssMedia.emit('connection', ws, request);
-        });
-    } else if (pathname === '/ws-live') {
+    const { pathname } = url.parse(request.url || '');
+    if (pathname === '/ws-live') {
         wssLive.handleUpgrade(request, socket, head, (ws) => {
             wssLive.emit('connection', ws, request);
         });
@@ -769,712 +729,21 @@ server.on('upgrade', (request, socket, head) => {
     }
 });
 
-wss.on('connection', (wsMain: WebSocket) => {
-    let callSid: string | null = null;
-    let callerNumber: string = '';
 
-    wsMain.on('message', async (message: string) => {
-        try {
-            const data = JSON.parse(message);
+// ─── Legacy Handler Cleaned ───
 
-            if (data.type === 'setup') {
-                callSid = data.callSid;
-                const to = data.customParameters?.to || '';
-                callerNumber = data.customParameters?.from || '';
 
-                console.log(`[WS] Setup for call: ${callSid} (To: ${to}, From: ${callerNumber})`);
+// ─── Legacy Note Handler Cleaned ───
 
-                let systemPrompt = DEFAULT_SYSTEM_PROMPT;
-                let uid = '';
-                let agentInstructions = '';
 
-                const userData = await getUserConfig(to);
-                if (userData) {
-                    uid = userData.uid;
-                    const normalizedTarget = normalizePhoneNumber(to);
-                    const config = userData.agentPhoneConfigs?.[to] || userData.agentPhoneConfigs?.[normalizedTarget] || userData.agentPhoneConfig;
+// ─── Legacy Setup Handler Cleaned ───
 
-                    if (config?.enabled) {
-                        let customInstructions = config.systemPrompt || '';
-                        let projectListContext = '';
 
-                        if (config.mode === 'leads' || config.leadCaptureEnabled) {
-                            if (config.leadFields?.length > 0) {
-                                const fields = config.leadFields.map((f: any) => `${f.name}${f.required ? ' (required)' : ''}`).join(', ');
-                                customInstructions += `\n\nLEAD CAPTURE TASK: Your primary goal is to politely collect the following information from the caller: ${fields}. 
-                                Once you have collected the required information, acknowledge it and call the 'saveCapturedLead' tool to save the data. 
-                                Be natural and conversational while asking for these details. 
-                                DO NOT share any internal project data or user information with the caller.`;
-                            }
-                            if (config.appointmentBookingEnabled) {
-                                customInstructions += `\n\nAPPOINTMENT BOOKING: After collecting the caller's information, offer to book an appointment for them. Ask what date and time works best. Once they confirm, call the 'bookAppointment' tool with an ISO 8601 dateTimeIso, their preferred duration in minutes (default 60), and all collected lead details in the notes field.`;
-                            }
-                            console.log(`[WS] Lead Capture mode for user ${uid}. Restricting context.`);
-                        } else {
-                            console.log(`[WS] Normal assistant mode for user ${uid}. Injecting project context.`);
-                            const firestore = initFirebase();
-                            if (firestore) {
-                                const projectsSnapshot = await firestore.collection('users').doc(uid).collection('projects')
-                                    .orderBy('lastModified', 'desc').limit(10).get();
+// ─── Legacy Projects Handler Cleaned ───
 
-                                const projectList = projectsSnapshot.docs.map(d => {
-                                    const pData = d.data();
-                                    return `"${pData.name}" (ID: ${d.id})${pData.description ? ` - ${pData.description.substring(0, 50)}` : ''}`;
-                                });
 
-                                projectListContext = projectList.length > 0
-                                    ? `\n\nUSER'S PROJECTS:\n${projectList.join('\n')}`
-                                    : `\n\nUSER'S PROJECTS: The user has no projects yet.`;
 
-                                const userProfileInfo = `\n\nUSER PROFILE: ${userData.displayName || 'Unnamed User'}${userData.description ? ` - ${userData.description}` : ''}`;
-                                projectListContext = userProfileInfo + projectListContext;
-                            }
-                        }
-
-                        systemPrompt = `${DEFAULT_SYSTEM_PROMPT}\n\nUSER'S AGENT INSTRUCTIONS: ${customInstructions}${projectListContext}`;
-                        agentInstructions = customInstructions;
-                        console.log(`[WS] Loaded instructions for user ${uid}.`);
-                    } else {
-                        console.log(`[WS] User ${uid} found but Phone Agent is DISABLED.`);
-                    }
-                } else {
-                    console.warn(`[WS] No user found for phone number: ${to}`);
-                }
-
-                sessions[callSid!] = {
-                    contents: [],
-                    uid,
-                    toNumber: to,
-                    agentInstructions,
-                    systemPrompt
-                };
-                // NOTE: No synthetic greeting prompt here — welcomeGreeting is set in TwiML <ConversationRelay>.
-
-            } else if (data.type === 'prompt') {
-                if (!callSid || !sessions[callSid]) return;
-
-                const userPrompt = data.voicePrompt || data.textPrompt || '';
-                console.log(`[WS] User (${callSid}): ${userPrompt}`);
-
-                const session = sessions[callSid];
-                session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
-
-                try {
-                    const firestore = initFirebase();
-                    const toNum = (session as any).toNumber || '';
-                    const userData = (session.uid && firestore) ? await getUserConfig(toNum) : null;
-                    const normalizedTarget = normalizePhoneNumber(toNum);
-                    const config = userData?.agentPhoneConfigs?.[toNum] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
-                    const leadCaptureEnabled = config?.mode === 'leads' || !!config?.leadCaptureEnabled;
-
-                    const result = await ai.models.generateContentStream({
-                        model: 'gemini-2.0-flash',
-                        contents: session.contents,
-                        config: {
-                            systemInstruction: session.systemPrompt,
-                            tools: leadCaptureEnabled ? [leadCaptureTool] : []
-                        }
-                    });
-
-                    let responseText = '';
-                    let anyToolCalled = false;
-
-                    for await (const chunk of result) {
-                        const text = chunk.text;
-                        if (text) {
-                            responseText += text;
-                            wsMain.send(JSON.stringify({ type: 'text', token: text, last: false }));
-                        }
-
-                        const calls = chunk.functionCalls;
-                        if (calls && calls.length > 0) {
-                            anyToolCalled = true;
-                            for (const call of calls) {
-                                if (call.name === 'saveCapturedLead') {
-                                    console.log(`[WS] Saving Lead for call ${callSid}:`, call.args);
-                                    const firestore2 = initFirebase();
-                                    if (session.uid && firestore2) {
-                                        try {
-                                            await firestore2.collection('users').doc(session.uid).collection('phoneAgentLeads').add({
-                                                callerNumber,
-                                                data: (call.args as any).data,
-                                                agentInstructions: session.agentInstructions,
-                                                timestamp: Date.now()
-                                            });
-                                            console.log(`[WS] Lead saved to Firestore for user ${session.uid}`);
-                                        } catch (fsErr) {
-                                            console.error("[WS] Error saving lead to Firestore:", fsErr);
-                                        }
-                                    }
-                                    session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'saveCapturedLead', response: { success: true } } }] });
-                                } else if (call.name === 'transferToHuman') {
-                                    console.log(`[WS] Agent requested handoff count for call ${callSid}`);
-                                    wsMain.send(JSON.stringify({ type: "handoff", handoffData: JSON.stringify({ reason: "transferToHuman requested" }) }));
-                                    return; // Turn ends here
-                                } else if (call.name === 'bookAppointment') {
-                                    const apptArgs = call.args as any;
-                                    let bookingResult: any = { success: false, error: 'Appointment booking failed.' };
-                                    try {
-                                        const agentUserData = await getUserConfig(data.customParameters?.to || callerNumber);
-                                        const normalizedTo = normalizePhoneNumber(data.customParameters?.to || callerNumber);
-                                        const agentCfg = agentUserData?.agentPhoneConfigs?.[data.customParameters?.to] || agentUserData?.agentPhoneConfigs?.[normalizedTo] || agentUserData?.agentPhoneConfig;
-
-                                        if (agentCfg?.appointmentBookingEnabled && agentUserData?.uid) {
-                                            const firestore3 = initFirebase();
-                                            if (firestore3) {
-                                                const calTokenSnap = await firestore3.doc(`users/${agentUserData.uid}/integrations/googleCalendar`).get();
-                                                const refreshToken = calTokenSnap?.data()?.refreshToken;
-                                                if (refreshToken) {
-                                                    const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID || '';
-                                                    const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET || '';
-                                                    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-                                                        method: 'POST',
-                                                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                                                        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }).toString(),
-                                                    });
-                                                    if (tokenRes.ok) {
-                                                        const tokenJson: any = await tokenRes.json();
-                                                        const accessToken = tokenJson.access_token;
-                                                        const startMs = new Date(apptArgs.dateTimeIso).getTime();
-                                                        const endMs = startMs + (apptArgs.durationMinutes || 60) * 60 * 1000;
-                                                        const calendarId = agentCfg.calendarId || 'primary';
-                                                        const eventBody = {
-                                                            summary: `📞 Appointment – ${callerNumber}`,
-                                                            description: `Booked via phone agent.\n\nLead details:\n${apptArgs.notes}`,
-                                                            start: { dateTime: new Date(startMs).toISOString() },
-                                                            end: { dateTime: new Date(endMs).toISOString() },
-                                                        };
-                                                        const calRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
-                                                            method: 'POST',
-                                                            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-                                                            body: JSON.stringify(eventBody),
-                                                        });
-                                                        if (calRes.ok) {
-                                                            const calData: any = await calRes.json();
-                                                            bookingResult = { success: true, eventId: calData.id, htmlLink: calData.htmlLink };
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    } catch (bookErr: any) {
-                                        console.error('[WS] bookAppointment error:', bookErr);
-                                    }
-                                    session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'bookAppointment', response: bookingResult } }] });
-                                }
-                            }
-                        }
-                    }
-
-                    if (anyToolCalled) {
-                        const followup = await ai.models.generateContentStream({
-                            model: 'gemini-2.0-flash',
-                            contents: session.contents,
-                            config: { systemInstruction: session.systemPrompt, tools: [leadCaptureTool] }
-                        });
-                        for await (const chunk of followup) {
-                            const text = chunk.text;
-                            if (text) {
-                                responseText += text;
-                                wsMain.send(JSON.stringify({ type: 'text', token: text, last: false }));
-                            }
-                        }
-                    }
-
-                    // Bug Fix: save the model's full reply to session history so the next
-                    // turn has the complete conversation context (prevents re-greeting).
-                    if (responseText) {
-                        session.contents.push({ role: 'model', parts: [{ text: responseText }] });
-                    }
-
-                    wsMain.send(JSON.stringify({ type: 'text', token: '', last: true }));
-                    console.log(`[WS] Gemini (${callSid}): ${responseText.substring(0, 80)} [history: ${session.contents.length} turns]`);
-                } catch (apiError) {
-                    console.error(`[WS] Gemini API Error for ${callSid}:`, apiError);
-                    wsMain.send(JSON.stringify({ type: 'text', token: "Sorry, I had an error processing that.", last: true }));
-                }
-            } else if (data.type === 'interrupt') {
-                console.log(`[WS] Interruption for call ${callSid}`);
-            }
-        } catch (e) {
-            console.error('[WS] Error:', e);
-        }
-    });
-
-    wsMain.on('close', () => {
-        console.log(`[WS] Closed for call: ${callSid}`);
-        if (callSid && sessions[callSid]) {
-            delete sessions[callSid];
-        }
-    });
-});
-
-// ─── Note Mode WebSocket (/ws-note) — Gemini Live API Bridge ─────────────────
-// This handler is used when the user has configured their phone agent in Note Mode.
-wssNote.on('connection', (wsNote: WebSocket) => {
-    let callSid: string | null = null;
-
-    wsNote.on('message', async (message: string) => {
-        try {
-            const data = JSON.parse(message);
-
-            if (data.type === 'setup') {
-                callSid = data.callSid;
-                const to = data.customParameters?.to || '';
-                const from = normalizePhoneNumber(data.customParameters?.from || '');
-                console.log(`[WS-Note] Setup for call: ${callSid} (To: ${to}, From: ${from})`);
-
-                // Fetch all SMS notes for this user from Firestore
-                let notesContext = 'The user has not sent any notes yet.';
-                let customSystemPrompt = '';
-                let notesCount = 0;
-                const firestore = initFirebase();
-                if (firestore) {
-                    try {
-                        // Find user by phone number
-                        const normalizedTarget = normalizePhoneNumber(to);
-                        const noPlusTarget = normalizedTarget.startsWith('+') ? normalizedTarget.substring(1) : normalizedTarget;
-                        const searchValues = [to, normalizedTarget, noPlusTarget, `+${noPlusTarget}`];
-                        const uniqueValues = [...new Set(searchValues)].slice(0, 10);
-                        
-                        let userSnap = await firestore.collection('users')
-                            .where('agentPhoneNumbersList', 'array-contains-any', uniqueValues)
-                            .limit(1).get();
-                        
-                        if (userSnap.empty) {
-                            userSnap = await firestore.collection('users')
-                                .where('agentPhoneNumber', 'in', uniqueValues)
-                                .limit(1).get();
-                        }
-                        
-                        if (!userSnap.empty) {
-                            const userDoc = userSnap.docs[0];
-                            const uid = userDoc.id;
-                            const userData = userDoc.data();
-                            const config = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
-                            customSystemPrompt = config?.systemPrompt || '';
-
-                            // Fetch all notes
-                            const notesSnap = await firestore.collection('users').doc(uid)
-                                .collection('phoneAgentNotes')
-                                .orderBy('timestamp', 'desc')
-                                .limit(200)
-                                .get();
-
-                            notesCount = notesSnap.size;
-
-                            if (!notesSnap.empty) {
-                                const notesList = notesSnap.docs.map(d => {
-                                    const n = d.data();
-                                    const date = new Date(n.timestamp).toLocaleString();
-                                    return `[${date}] ${n.body}`;
-                                });
-                                notesContext = notesList.join('\n');
-                                console.log(`[WS-Note] Loaded ${notesList.length} notes for user ${uid}`);
-                            } else {
-                                console.log(`[WS-Note] No notes yet for user ${uid}`);
-                            }
-                        } else {
-                            console.warn(`[WS-Note] No user found for phone number: ${to}`);
-                        }
-                    } catch (err) {
-                        console.error('[WS-Note] Error fetching notes:', err);
-                    }
-                }
-
-                // Build the system instruction with note RAG context
-                const noteSystemPrompt = [
-                    `You are a personal voice assistant with access to the user's notes. These notes were sent as SMS text messages to this number.`,
-                    `You MUST answer questions based on the content of these notes.`,
-                    `This is a live phone call, so be concise and speak naturally. Do not use markdown, bullet points, asterisks, or emojis.`,
-                    customSystemPrompt ? `\nAdditional instructions: ${customSystemPrompt}` : '',
-                    `\n\n--- USER'S NOTES (${notesCount} total) ---\n${notesContext}\n--- END OF NOTES ---`
-                ].filter(Boolean).join('\n');
-
-                sessions[callSid!] = {
-                    contents: [],
-                    systemPrompt: noteSystemPrompt,
-                    uid: userData?.uid
-                };
-                console.log(`[WS-Note] Session ready for call: ${callSid}`);
-
-            } else if (data.type === 'prompt') {
-                if (!callSid || !sessions[callSid]) return;
-                const userPrompt = data.voicePrompt || data.textPrompt || '';
-                const session = sessions[callSid];
-                console.log(`[WS-Note] User (${callSid}): ${userPrompt}`);
-
-                session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
-
-                try {
-                    const result = await ai.models.generateContentStream({
-                        model: 'gemini-2.0-flash',
-                        contents: session.contents,
-                        config: { systemInstruction: session.systemPrompt }
-                    });
-
-                    let fullResponse = '';
-                    for await (const chunk of result) {
-                        const text = chunk.text;
-                        if (text) {
-                            fullResponse += text;
-                            wsNote.send(JSON.stringify({ type: 'text', token: text, last: false }));
-                        }
-                    }
-                    
-                    if (!fullResponse) {
-                        wsNote.send(JSON.stringify({ type: 'text', token: "I couldn't find an answer in your notes.", last: true }));
-                    } else {
-                        // Bug Fix: save model response to history
-                        session.contents.push({ role: 'model', parts: [{ text: fullResponse }] });
-                        wsNote.send(JSON.stringify({ type: 'text', token: '', last: true }));
-                    }
-                    console.log(`[WS-Note] Gemini (${callSid}): ${fullResponse.substring(0, 80)}... [history: ${session.contents.length} turns]`);
-                } catch (apiError) {
-                    console.error(`[WS-Note] Gemini API Error for ${callSid}:`, apiError);
-                    wsNote.send(JSON.stringify({ type: 'text', token: "I'm sorry, I had trouble looking up your notes.", last: true }));
-                }
-
-            } else if (data.type === 'interrupt') {
-                console.log(`[WS-Note] Interruption for call ${callSid}`);
-            }
-        } catch (e) {
-            console.error('[WS-Note] Error:', e);
-        }
-    });
-
-    wsNote.on('close', () => {
-        console.log(`[WS-Note] Closed for call: ${callSid}`);
-    });
-});
-
-// ─── Setup Mode WebSocket (/ws-setup) — Gemini Live API Bridge ─────────────────
-wssSetup.on('connection', (wsSetup: WebSocket) => {
-    let callSid: string | null = null;
-    let callerNumber: string = '';
-
-    wsSetup.on('message', async (message: string) => {
-        try {
-            const data = JSON.parse(message);
-
-            if (data.type === 'setup') {
-                callSid = data.callSid;
-                const to = data.customParameters?.to || '';
-                callerNumber = normalizePhoneNumber(data.customParameters?.from || '');
-                const callerCity = data.customParameters?.callerCity || '';
-                const callerState = data.customParameters?.callerState || '';
-                const callerCountry = data.customParameters?.callerCountry || '';
-
-                console.log(`[WS-Setup] Setup for call: ${callSid} (To: ${to}, From: ${callerNumber}, Location: ${callerCity}, ${callerState})`);
-
-                const locationStr = [callerCity, callerState, callerCountry].filter(Boolean).join(', ');
-                const locationContext = locationStr 
-                    ? `The caller is located in or near: ${locationStr}.\nBefore assigning the final number, use the 'searchAreaCodes' tool with region code '${callerState}' to look up available area codes in their state, and politely ASK the user which one they prefer from the available options.` 
-                    : `Before assigning the final number, politely ask the user what state/province they are in, use 'searchAreaCodes' to look up available area codes there, and ASK the user which one they prefer.`;
-
-                let managementContext = "";
-                const userData = await getUserConfig(callerNumber);
-                if (userData && userData.agentPhoneNumbersList?.length > 0) {
-                    const numbers = userData.agentPhoneNumbersList.join(', ');
-                    managementContext = `
-EXISTING USER DETECTED: This user already has the following agent numbers: ${numbers}.
-Start by acknowledging their existing agents. 
-Introduce a "Management Menu":
-- Ask if they want to create a NEW agent.
-- Ask if they want to DELETE an existing agent.
-- Ask if they want to REPLACE one of their existing numbers with a new one.
-- Ask if they want to see ANALYTICS (e.g. lead counts or common caller questions).
-If they want to delete or replace, you MUST use the 'deleteAgent' tool. For analytics, use 'getAgentAnalytics'.`;
-                }
-
-                const systemPrompt = `You are the Freshfront Agent Setup Assistant. You are talking to a user on the phone. 
-${managementContext || "Start by warmly welcoming them and asking which type of phone agent they want:"}
-
-Option 1 — LEAD CAPTURE AGENT: An AI phone agent for their business that answers calls and collects caller information (name, phone number, inquiry, etc.) and forwards leads to the business owner.
-
-Option 2 — INFORMATIONAL HOTLINE: A personal AI hotline that answers questions based on notes the owner sends to it via text message. Great for information lines, FAQs, or personal knowledge bases. No business account required.
-
-Based on their choice, collect the required details:
-
-For LEAD CAPTURE (agentType='leads'):
-1. Company Name
-2. Company Description
-3. Website (optional, ask once)
-4. Company Email (optional, ask once)
-5. The product or service they provide
-6. What data to collect from callers (e.g. Name, Phone Number, Inquiry)
-7. Where to send leads: email, sms, or app (say 'dashboard' maps to app)
-8. Human Handoff (Ask the user if they want to optionally allow callers to be transferred to a real human during a call. If yes, ask them for the phone number where calls should be forwarded.)
-9. Automated Follow-up SMS (Ask them if they want to send an automatic text to every lead after the call ends, e.g. a booking link or a thank you message. If yes, ask them for the exact message body.)
-
-CRITICAL ACCURACY FOR WEBSITE:
-When the user provides their business website URL, you MUST ask them to **spell it out** (e.g. "Could you spell that out for me to make sure I got it right? A-B-C-dot-com"). This is crucial for correctly configuring their agent.
-
-For INFORMATIONAL HOTLINE (agentType='hotline'):
-1. A friendly label or name for their hotline (optional — if they don't have one, use their business or personal name, or just say 'Your Hotline')
-
-LOCATION AWARENESS:
-${locationContext}
-If no area codes are available in their state, ask if another nearby state or region works for them.
-
-CRITICAL INSTRUCTIONS:
-- You are on a phone call. Be conversational, concise, and friendly. No markdown.
-- Ask one or two questions at a time — do not dump all questions at once.
-- Only call 'provisionAgent' AFTER they have explicitly chosen an area code. Pass their chosen area code as the 'areaCode' argument.
-- AFTER SUCCESSFUL PROVISIONING: You MUST instruct the caller to go to freshfront.co to create an account. Explain that they need to sign up with their phone number to manage their new agent, view leads, and enable context training via SMS.
-- If the caller sounds unsure, briefly explain the difference again.
-- Never use asterisks, bullet points, or emojis in your speech.`;
-
-                sessions[callSid!] = {
-                    contents: [],
-                    systemPrompt,
-                    uid: userData?.uid
-                };
-
-                    wsSetup.send(JSON.stringify({
-                        type: 'text',
-                        token: responseText.trim(),
-                        last: true
-                    }));
-
-                    // Bug Fix: save model response to history
-                    if (responseText) {
-                        session.contents.push({ role: 'model', parts: [{ text: responseText.trim() }] });
-                    }
-
-                    console.log(`[WS-Setup] Gemini (${callSid}): ${responseText} [history: ${session.contents.length} turns]`);
-                } catch (apiError) {
-                    console.error(`[WS-Setup] Gemini API Error for ${callSid}:`, apiError);
-                }
-            }
-        } catch (e) {
-            console.error('[WS-Setup] Error:', e);
-        }
-    });
-
-    wsSetup.on('close', () => {
-        if (callSid && sessions[callSid]) {
-            delete sessions[callSid];
-        }
-    });
-});
-
-// ─── Projects Mode WebSocket (/ws-projects) ──────────────────────────────────
-wssProjects.on('connection', (wsProjects: WebSocket) => {
-    let callSid: string | null = null;
-    let callerNumber: string = '';
-    let callerUid: string = '';
-    let callerName: string = 'there';
-    // Cache project names/IDs for this session
-    let projectsCache: Array<{ id: string; name: string }> = [];
-
-    wsProjects.on('message', async (message: string) => {
-        try {
-            const data = JSON.parse(message);
-
-            if (data.type === 'setup') {
-                callSid = data.callSid;
-                const to = data.customParameters?.to || '';
-                callerNumber = normalizePhoneNumber(data.customParameters?.from || '');
-
-                console.log(`[WS-Projects] Setup for call: ${callSid} (From: ${callerNumber})`);
-
-                const firestore = initFirebase();
-                let projectListContext = 'You have no projects yet.';
-
-                if (firestore) {
-                    try {
-                        const normalizedFrom = normalizePhoneNumber(callerNumber);
-                        const noPlusFrom = normalizedFrom.startsWith('+') ? normalizedFrom.substring(1) : normalizedFrom;
-                        const searchValues = [...new Set([callerNumber, normalizedFrom, noPlusFrom, `+${noPlusFrom}`])].slice(0, 4);
-                        const userSnap = await firestore.collection('users')
-                            .where('personalPhoneNumber', 'in', searchValues).limit(1).get();
-
-                        if (!userSnap.empty) {
-                            const userDoc = userSnap.docs[0];
-                            callerUid = userDoc.id;
-                            const userData = userDoc.data();
-                            callerName = userData.displayName || userData.firstName || 'there';
-
-                            // Load user's projects
-                            const projectsSnap = await firestore.collection('users').doc(callerUid)
-                                .collection('projects').orderBy('lastModified', 'desc').limit(15).get();
-
-                            projectsCache = projectsSnap.docs.map(d => ({ id: d.id, name: d.data().name || 'Untitled' }));
-
-                            projectListContext = projectsCache.length > 0
-                                ? projectsCache.map((p, i) => `${i + 1}. "${p.name}" (ID: ${p.id})`).join('\n')
-                                : 'You have no projects yet.';
-
-                            console.log(`[WS-Projects] Loaded ${projectsCache.length} projects for user ${callerUid}`);
-                        } else {
-                            console.warn(`[WS-Projects] No linked account found for ${callerNumber}`);
-                        }
-                    } catch (e) {
-                        console.error('[WS-Projects] Firestore error during setup:', e);
-                    }
-                }
-
-                const systemPrompt = `You are a Freshfront voice project assistant. The user's name is ${callerName}.
-You help them manage their projects hands-free via a phone call.
-
-CRITICAL VOICE RULES:
-- You are on a phone call. Be concise, natural and conversational.
-- Never use markdown syntax (asterisks, bullet points, hash symbols).
-- Always confirm clearly after performing any action.
-- When the user asks to add something, confirm which project they mean if ambiguous.
-- Project IDs should NEVER be read aloud. Only refer to projects by name.
-
-CURRENT DATE: ${new Date().toDateString()}
-
-USER'S PROJECTS:
-${projectListContext}
-
-CAPABILITIES:
-- Create a new project (call createProject)
-- Add a note to a project (call addNote)
-- Add a task to a project (call addTask)
-- Add a calendar event to a project (call addCalendarEvent)
-- Generate an AI image for a project (call generateImage)
-- List their current projects (call listProjects)
-
-When calling addTask, the priority MUST be one of: low, medium, high.
-After each successful action, confirm it was saved and mention that an SMS confirmation was sent.`;
-
-                sessions[callSid!] = { contents: [], systemPrompt, uid: callerUid };
-
-                    wsProjects.send(JSON.stringify({ type: 'text', token: '', last: true }));
-
-                    // Bug Fix: save model response to history
-                    if (responseText) {
-                        session.contents.push({ role: 'model', parts: [{ text: responseText.trim() }] });
-                    }
-
-                    console.log(`[WS-Projects] Gemini (${callSid}): ${responseText.substring(0, 80)} [history: ${session.contents.length} turns]`);
-
-                } catch (apiError) {
-                    console.error(`[WS-Projects] Gemini API Error for ${callSid}:`, apiError);
-                    wsProjects.send(JSON.stringify({ type: 'text', token: "Sorry, I ran into an issue. Please try again.", last: true }));
-                }
-
-            } else if (data.type === 'interrupt') {
-                console.log(`[WS-Projects] Interruption for call ${callSid}`);
-            }
-        } catch (e) {
-            console.error('[WS-Projects] Error:', e);
-        }
-    });
-
-    wsProjects.on('close', () => {
-        console.log(`[WS-Projects] Closed for call: ${callSid}`);
-        if (callSid && sessions[callSid]) delete sessions[callSid];
-    });
-});
-
-
-// ─── Media Mode WebSocket (/ws-media) — Multimodal Live API Bridge ──────────────
-wssMedia.on('connection', (wsTwilio: WebSocket) => {
-    let streamSid: string | null = null;
-    let callSid: string | null = null;
-    let geminiLiveSession: any = null;
-
-    console.log('[WS-Media] Twilio connected');
-
-    wsTwilio.on('message', async (message: string) => {
-        try {
-            const data = JSON.parse(message);
-
-            if (data.event === 'start') {
-                streamSid = data.start.streamSid;
-                callSid = data.start.callSid;
-                const customParams = data.start.customParameters || {};
-                const to = customParams.to || '';
-                
-                console.log(`[WS-Media] Stream started: ${streamSid} for call ${callSid}`);
-
-                // Fetch user config and instructions
-                const userData = await getUserConfig(to);
-                const normalizedTo = normalizePhoneNumber(to);
-                const activeConfig = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTo] || userData?.agentPhoneConfig;
-                const systemInstruction = activeConfig?.systemPrompt || DEFAULT_SYSTEM_PROMPT;
-
-                // Connect to Gemini Multimodal Live API
-                try {
-                    geminiLiveSession = await (ai as any).models.live.connect({
-                        model: 'gemini-2.0-flash-exp', 
-                        config: {
-                            systemInstruction: { parts: [{ text: systemInstruction }] },
-                            generationConfig: {
-                                responseModalities: ['audio'],
-                                speechConfig: {
-                                    voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } }
-                                }
-                            }
-                        }
-                    });
-
-                    console.log('[WS-Media] Connected to Gemini Multimodal Live API');
-
-                    // Handle audio from Gemini
-                    geminiLiveSession.on('audio', (audioData: { data: string, mimeType: string }) => {
-                        if (!streamSid) return;
-                        // Gemini sends 24kHz PCM (base64)
-                        const pcm24 = new Int16Array(Buffer.from(audioData.data, 'base64').buffer);
-                        // Resample 24kHz -> 8kHz
-                        const pcm8 = audioUtils.resample24To8(pcm24);
-                        // Convert PCM -> mulaw
-                        const mulaw = audioUtils.pcmToMulaw(pcm8);
-                        // Send to Twilio
-                        wsTwilio.send(JSON.stringify({
-                            event: 'media',
-                            streamSid: streamSid,
-                            media: { payload: Buffer.from(mulaw).toString('base64') }
-                        }));
-                    });
-
-                    geminiLiveSession.on('message', (msg: any) => {
-                        if (msg.serverContent?.modelTurn?.parts?.[0]?.text) {
-                            console.log(`[WS-Media] Gemini Text: ${msg.serverContent.modelTurn.parts[0].text}`);
-                        }
-                    });
-
-                } catch (connErr) {
-                    console.error('[WS-Media] Failed to connect to Gemini Live:', connErr);
-                    wsTwilio.close();
-                }
-
-            } else if (data.event === 'media') {
-                if (!geminiLiveSession) return;
-                // Twilio sends 8kHz mulaw
-                const mulaw = Buffer.from(data.media.payload, 'base64');
-                // Convert mulaw -> PCM (Int16)
-                const pcm8 = audioUtils.mulawToPcm(mulaw);
-                // Resample 8kHz -> 16kHz for Gemini
-                const pcm16 = audioUtils.resample8To16(pcm8);
-                // Send to Gemini
-                geminiLiveSession.send({
-                    realtimeInput: {
-                        mediaChunks: [{
-                            data: Buffer.from(pcm16.buffer).toString('base64'),
-                            mimeType: 'audio/l16;rate=16000'
-                        }]
-                    }
-                });
-
-            } else if (data.event === 'stop') {
-                console.log(`[WS-Media] Stream stopped: ${streamSid}`);
-                if (geminiLiveSession) geminiLiveSession.close();
-            }
-        } catch (err) {
-            console.error('[WS-Media] Error:', err);
-        }
-    });
-
-    wsTwilio.on('close', () => {
-        console.log(`[WS-Media] Twilio closed: ${streamSid}`);
-        if (geminiLiveSession) geminiLiveSession.close();
-    });
-});
+// ─── Legacy Media Handler Cleaned ───
 
 
 // ─── Gemini Live API Bridge WebSocket (/ws-live) ──────────────────────────────
@@ -1509,51 +778,107 @@ wssLive.on('connection', (wsTwilio: WebSocket) => {
 
             // ── 1. Stream Start ──────────────────────────────────────────────
             if (data.event === 'start') {
-                streamSid = data.start?.streamSid || null;
-                callSid = data.start?.callSid || null;
-                const customParams = data.start?.customParameters || {};
-                toNumber = customParams.to || '';
-                callerNumber = customParams.from || '';
-                const configuredVoice = customParams.voice || 'Kore';
-                const greeting = customParams.greeting || 'Hello! How can I help you today?';
+                streamSid = data.start.streamSid;
+                callSid = data.start.callSid;
+                const customParams = data.start.customParameters || {};
+                const agentMode = customParams.agentMode || 'leads';
+                const callerCity = customParams.callerCity || '';
+                const callerState = customParams.callerState || '';
+                const callerCountry = customParams.callerCountry || '';
+                const greeting = customParams.greeting || WELCOME_GREETING;
+                const configuredVoice = customParams.voice || 'en-US-Chirp3-HD-Kore';
 
-                console.log(`[WS-Live] Stream started: ${streamSid} (call: ${callSid}, to: ${toNumber})`);
+                console.log(`[WS-Live] Stream started: ${streamSid} (call: ${callSid}, mode: ${agentMode})`);
 
-                // Load user config and system prompt
+                // Create a mode-specific initialization context
                 try {
+                    const params = new URLSearchParams(wsTwilio.url?.split('?')[1] || '');
+                    toNumber = customParams.to || params.get('to') || '';
+                    callerNumber = customParams.from || params.get('from') || '';
+
                     const userData = await getUserConfig(toNumber);
                     const normalizedTo = normalizePhoneNumber(toNumber);
                     agentConfig = userData?.agentPhoneConfigs?.[toNumber]
                         || userData?.agentPhoneConfigs?.[normalizedTo]
                         || userData?.agentPhoneConfig;
                     uid = userData?.uid || '';
+                    const firestore = initFirebase();
 
-                    if (agentConfig?.enabled) {
-                        let customInstructions = agentConfig.systemPrompt || '';
-                        if ((agentConfig.mode === 'leads' || agentConfig.leadCaptureEnabled) && agentConfig.leadFields?.length > 0) {
-                            const fields = agentConfig.leadFields.map((f: any) => `${f.name}${f.required ? ' (required)' : ''}`).join(', ');
-                            customInstructions += `\n\nLEAD CAPTURE TASK: Your primary goal is to politely collect the following information from the caller: ${fields}. Once you have collected the required information, call the 'saveCapturedLead' tool. Be natural and conversational.`;
-                            if (agentConfig.appointmentBookingEnabled) {
-                                customInstructions += `\n\nAPPOINTMENT BOOKING: After collecting the caller's information, offer to book an appointment. Ask what date and time works best, then call the 'bookAppointment' tool.`;
+                    if (agentMode === 'note') {
+                        // ── Note Mode Initialization ──
+                        let notesContext = 'The user has not sent any notes yet.';
+                        let notesCount = 0;
+                        if (firestore && uid) {
+                            const notesSnap = await firestore.collection('users').doc(uid).collection('phoneAgentNotes').orderBy('timestamp', 'desc').limit(200).get();
+                            notesCount = notesSnap.size;
+                            if (!notesSnap.empty) {
+                                notesContext = notesSnap.docs.map(d => `[${new Date(d.data().timestamp).toLocaleString()}] ${d.data().body}`).join('\n');
                             }
                         }
-                        systemPrompt = `${DEFAULT_SYSTEM_PROMPT}\n\nUSER'S AGENT INSTRUCTIONS: ${customInstructions}`;
+                        systemPrompt = `You are a personal voice assistant with access to the user's notes. These notes were sent as SMS text messages to this number.
+You MUST answer questions based on the content of these notes.
+This is a live phone call, so be concise and speak naturally. Do not use markdown, bullet points, asterisks, or emojis.
+${agentConfig?.systemPrompt ? `\n\nAdditional instructions: ${agentConfig.systemPrompt}` : ''}
+\n\n--- USER'S NOTES (${notesCount} total) ---\n${notesContext}\n--- END OF NOTES ---`;
+
+                    } else if (agentMode === 'setup') {
+                        // ── Setup Mode Initialization ──
+                        systemPrompt = `You are a Freshfront voice setup assistant. You help callers create and configure their own AI phone agents.
+Your goal is to guide them through choosing an agent type (Leads, Projects, or Notes) and configuring it.
+You are on a phone call. Be friendly, concise, and helpful.
+Caller Location: ${callerCity}, ${callerState}, ${callerCountry}
+Available Tools: Use searchAreaCodes to help them find a phone number for their new agent.
+${DEFAULT_SYSTEM_PROMPT}`;
+
+                    } else if (agentMode === 'projects') {
+                        // ── Projects Mode Initialization ──
+                        let projectListContext = 'You have no projects yet.';
+                        let projectsCache: any[] = [];
+                        if (firestore && uid) {
+                            const projectsSnap = await firestore.collection('users').doc(uid).collection('projects').orderBy('lastModified', 'desc').limit(15).get();
+                            projectsCache = projectsSnap.docs.map(d => ({ id: d.id, name: d.data().name || 'Untitled' }));
+                            projectListContext = projectsCache.length > 0 ? projectsCache.map((p, i) => `${i + 1}. "${p.name}" (ID: ${p.id})`).join('\n') : 'You have no projects yet.';
+                        }
+                        const callerName = userData?.displayName || userData?.firstName || 'there';
+                        systemPrompt = `You are a Freshfront voice project assistant. The user's name is ${callerName}.
+You help them manage their projects hands-free. Be concise and natural.
+Never use markdown. Refer to projects by name only (no IDs).
+CURRENT DATE: ${new Date().toDateString()}
+USER'S PROJECTS:
+${projectListContext}
+CAPABILITIES: Create projects, add notes/tasks/events, generate images, list projects.
+${agentConfig?.systemPrompt ? `\n\nUser's custom instructions: ${agentConfig.systemPrompt}` : ''}`;
+
+                    } else {
+                        // ── Leads Mode (Default) ──
+                        if (agentConfig?.enabled) {
+                            let customInstructions = agentConfig.systemPrompt || '';
+                            if ((agentConfig.mode === 'leads' || agentConfig.leadCaptureEnabled) && agentConfig.leadFields?.length > 0) {
+                                const fields = agentConfig.leadFields.map((f: any) => `${f.name}${f.required ? ' (required)' : ''}`).join(', ');
+                                customInstructions += `\n\nLEAD CAPTURE TASK: Your primary goal is to politely collect the following information: ${fields}. Call 'saveCapturedLead' when done.`;
+                                if (agentConfig.appointmentBookingEnabled) {
+                                    customInstructions += `\n\nAPPOINTMENT BOOKING: After collecting info, offer to book an appointment. Call 'bookAppointment' when needed.`;
+                                }
+                            }
+                            systemPrompt = `${DEFAULT_SYSTEM_PROMPT}\n\nUSER'S AGENT INSTRUCTIONS: ${customInstructions}`;
+                        }
                     }
                 } catch (configErr) {
                     console.error('[WS-Live] Error loading user config:', configErr);
                 }
 
-                // Resolve Gemini voice name (strip Chirp3 prefix if present for Live API)
+                // Resolve Gemini voice name
                 let voiceName = configuredVoice;
-                if (voiceName.startsWith('en-US-Chirp3-HD-')) {
-                    voiceName = voiceName.replace('en-US-Chirp3-HD-', '');
-                }
-                // Fall back to a sane default if it's a Journey voice (not supported by Live API)
-                if (voiceName.startsWith('en-US-Journey')) {
-                    voiceName = 'Kore';
-                }
+                if (voiceName.startsWith('en-US-Chirp3-HD-')) { voiceName = voiceName.replace('en-US-Chirp3-HD-', ''); }
+                if (voiceName.startsWith('en-US-Journey')) { voiceName = 'Kore'; } // Map stable voices to preview voices if needed
 
-                const leadCaptureEnabled = agentConfig?.mode === 'leads' || !!agentConfig?.leadCaptureEnabled;
+                // Assign tools based on mode
+                let activeTools: any[] = [];
+                if (agentMode === 'setup') { activeTools = [voiceSetupTools]; }
+                else if (agentMode === 'projects') { activeTools = [projectManagementTools]; }
+                else if (agentMode === 'leads' || (agentConfig?.mode === 'leads' || !!agentConfig?.leadCaptureEnabled)) {
+                    activeTools = [leadCaptureTool];
+                }
 
                 // Open Gemini Live session
                 try {
@@ -1563,7 +888,7 @@ wssLive.on('connection', (wsTwilio: WebSocket) => {
                         speechConfig: {
                             voiceConfig: { prebuiltVoiceConfig: { voiceName } }
                         },
-                        tools: leadCaptureEnabled ? [leadCaptureTool] : [],
+                        tools: activeTools,
                         inputAudioTranscription: {},   // log what caller says
                         outputAudioTranscription: {},  // log what agent says
                     };
@@ -1582,7 +907,7 @@ wssLive.on('connection', (wsTwilio: WebSocket) => {
                                     turnComplete: true
                                 });
                             },
-                            onmessage: (msg: any) => {
+                            async onmessage(msg: any) {
                                 // ── Audio response → send to Twilio ──────────
                                 const parts = msg?.serverContent?.modelTurn?.parts || [];
                                 for (const part of parts) {
@@ -1639,9 +964,7 @@ wssLive.on('connection', (wsTwilio: WebSocket) => {
                                                 }
                                             }
                                         } else if (call.name === 'transferToHuman') {
-                                            // Signal Twilio to end the stream so the call falls through to <Say>
                                             result = { success: true };
-                                            // Close session gracefully — call will fall through to /twiml-handoff
                                             setTimeout(() => {
                                                 if (geminiSession) geminiSession.close();
                                                 wsTwilio.close();
@@ -1686,6 +1009,95 @@ wssLive.on('connection', (wsTwilio: WebSocket) => {
                                                 }
                                             } catch (bookErr) {
                                                 console.error('[WS-Live] bookAppointment error:', bookErr);
+                                            }
+                                        } else if (call.name === 'searchAreaCodes') {
+                                            const { region } = call.args as any;
+                                            try {
+                                                const res = await phoneAgentService.searchAvailableAreaCodes(region);
+                                                result = { success: true, areaCodes: res.availableAreaCodes, message: `Found numbers in area codes: ${res.availableAreaCodes.join(', ')}` };
+                                            } catch (err: any) {
+                                                result = { success: false, error: err.message };
+                                            }
+                                        } else if (call.name === 'provisionAgent') {
+                                            try {
+                                                const res = await phoneAgentService.provisionNewAgent({ ...call.args as any, callerNumber });
+                                                result = res;
+                                            } catch (err: any) {
+                                                result = { success: false, error: err.message };
+                                            }
+                                        } else if (call.name === 'deleteAgent') {
+                                            const { phoneNumber } = call.args as any;
+                                            const targetNumber = normalizePhoneNumber(phoneNumber);
+                                            try {
+                                                const released = await phoneAgentService.releaseTwilioNumber(targetNumber);
+                                                if (released) {
+                                                    const firestore = initFirebase();
+                                                    if (firestore && uid) {
+                                                        const userData = await getUserConfig(toNumber);
+                                                        if (userData) {
+                                                            const newList = userData.agentPhoneNumbersList.filter((n: string) => n !== targetNumber);
+                                                            const newConfigs = { ...userData.agentPhoneConfigs };
+                                                            delete newConfigs[targetNumber];
+                                                            await firestore.collection('users').doc(uid).update({ agentPhoneNumbersList: newList, agentPhoneConfigs: newConfigs });
+                                                        }
+                                                    }
+                                                    result = { success: true };
+                                                } else {
+                                                    result = { success: false, error: "Failed to release number via Twilio." };
+                                                }
+                                            } catch (err: any) {
+                                                result = { success: false, error: err.message };
+                                            }
+                                        } else if (call.name === 'getAgentAnalytics') {
+                                            const { timeRange, type } = call.args as any;
+                                            const firestore = initFirebase();
+                                            if (firestore && uid) {
+                                                try {
+                                                    const now = new Date();
+                                                    let startTime = new Date();
+                                                    if (timeRange === 'today') startTime.setHours(0, 0, 0, 0);
+                                                    else if (timeRange === 'week') startTime.setDate(now.getDate() - 7);
+                                                    else if (timeRange === 'month') startTime.setDate(now.getDate() - 30);
+                                                    const startTs = startTime.getTime();
+                                                    if (type === 'leads') {
+                                                        const snapshot = await firestore.collection('users').doc(uid).collection('phoneAgentLeads').where('timestamp', '>=', startTs).get();
+                                                        result = { success: true, count: snapshot.size, summary: `You received ${snapshot.size} leads.` };
+                                                    } else {
+                                                        result = { success: true, info: "General analytics retrieval not fully expanded in bridge yet." };
+                                                    }
+                                                } catch (err: any) {
+                                                    result = { success: false, error: err.message };
+                                                }
+                                            }
+                                        } else if (call.name === 'listProjects') {
+                                            const firestore = initFirebase();
+                                            if (uid && firestore) {
+                                                const snap = await firestore.collection('users').doc(uid).collection('projects').orderBy('lastModified', 'desc').limit(15).get();
+                                                const projects = snap.docs.map(d => d.data().name || 'Untitled');
+                                                result = { success: true, projects, summary: projects.join(', ') };
+                                            }
+                                        } else if (call.name === 'createProject') {
+                                            const { name, description } = call.args as any;
+                                            const firestore = initFirebase();
+                                            if (uid && firestore) {
+                                                const now = Date.now();
+                                                const newId = `${now}-${Math.random().toString(36).slice(2, 8)}`;
+                                                await firestore.collection('users').doc(uid).collection('projects').doc(newId).set({ id: newId, name, description: description || '', ownerUid: uid, createdAt: now, lastModified: now });
+                                                result = { success: true, projectId: newId, name };
+                                            }
+                                        } else if (call.name === 'addNote' || call.name === 'addTask' || call.name === 'addCalendarEvent') {
+                                            const firestore = initFirebase();
+                                            if (uid && firestore) {
+                                                const { projectId, title, content, description, priority, date } = call.args as any;
+                                                const coll = call.name === 'addNote' ? 'notes' : (call.name === 'addTask' ? 'tasks' : 'calendarEvents');
+                                                const item: any = { id: `${coll}-${Date.now()}`, title, createdAt: Date.now(), lastModified: Date.now() };
+                                                if (content) item.content = content;
+                                                if (description) item.description = description;
+                                                if (priority) item.priority = priority;
+                                                if (date) item.date = new Date(date).getTime() || Date.now();
+                                                const { FieldValue } = await import('firebase-admin/firestore');
+                                                await firestore.collection('users').doc(uid).collection('projects').doc(projectId).update({ [coll]: FieldValue.arrayUnion(item) });
+                                                result = { success: true, id: item.id };
                                             }
                                         }
 
