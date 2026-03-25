@@ -137,8 +137,22 @@ const leadCaptureTool = {
     ]
 };
 
-const provisionAgentTool = {
+const voiceSetupTools = {
     functionDeclarations: [
+        {
+            name: "deleteAgent",
+            description: "Deletes an existing phone agent number and releases it back to Twilio. Use this if the user wants to remove an agent or replace their number.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    phoneNumber: {
+                        type: Type.STRING,
+                        description: "The E.164 phone number to delete (e.g. '+16474904049')."
+                    }
+                },
+                required: ["phoneNumber"]
+            }
+        },
         {
             name: "searchAreaCodes",
             description: "Looks up available area codes in a specific geographic state or province (e.g. 'ON' for Ontario, 'NY' for New York). Call this BEFORE provisioning the agent to give the user a choice of area codes.",
@@ -1008,7 +1022,22 @@ wssSetup.on('connection', (wsSetup: WebSocket) => {
                     ? `The caller is located in or near: ${locationStr}.\nBefore assigning the final number, use the 'searchAreaCodes' tool with region code '${callerState}' to look up available area codes in their state, and politely ASK the user which one they prefer from the available options.` 
                     : `Before assigning the final number, politely ask the user what state/province they are in, use 'searchAreaCodes' to look up available area codes there, and ASK the user which one they prefer.`;
 
-                const systemPrompt = `You are the Freshfront Agent Setup Assistant. You are talking to a new user on the phone. Start by warmly welcoming them and asking which type of phone agent they want:
+                let managementContext = "";
+                const userData = await getUserConfig(callerNumber);
+                if (userData && userData.agentPhoneNumbersList?.length > 0) {
+                    const numbers = userData.agentPhoneNumbersList.join(', ');
+                    managementContext = `
+EXISTING USER DETECTED: This user already has the following agent numbers: ${numbers}.
+Start by acknowledging their existing agents. 
+Introduce a "Management Menu":
+- Ask if they want to create a NEW agent.
+- Ask if they want to DELETE an existing agent.
+- Ask if they want to REPLACE one of their existing numbers with a new one.
+If they want to delete or replace, you MUST use the 'deleteAgent' tool first.`;
+                }
+
+                const systemPrompt = `You are the Freshfront Agent Setup Assistant. You are talking to a user on the phone. 
+${managementContext || "Start by warmly welcoming them and asking which type of phone agent they want:"}
 
 Option 1 — LEAD CAPTURE AGENT: An AI phone agent for their business that answers calls and collects caller information (name, phone number, inquiry, etc.) and forwards leads to the business owner.
 
@@ -1042,7 +1071,8 @@ CRITICAL INSTRUCTIONS:
 
                 sessions[callSid!] = {
                     contents: [],
-                    systemPrompt
+                    systemPrompt,
+                    uid: userData?.uid
                 };
 
                 // Trigger Gemini to start the conversation automatically
@@ -1061,12 +1091,12 @@ CRITICAL INSTRUCTIONS:
                 session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
 
                 try {
-                    const response = await ai.models.generateContent({
+                    let response = await ai.models.generateContent({
                         model: 'gemini-2.0-flash',
                         contents: session.contents,
                         config: {
                             systemInstruction: session.systemPrompt,
-                            tools: [provisionAgentTool]
+                            tools: [voiceSetupTools]
                         }
                     });
 
@@ -1075,6 +1105,7 @@ CRITICAL INSTRUCTIONS:
                     }
 
                     let responseText = '';
+                    let anyToolCalled = false;
                     const parts = response.candidates?.[0]?.content?.parts || [];
 
                     for (const part of parts) {
@@ -1083,12 +1114,97 @@ CRITICAL INSTRUCTIONS:
                         }
 
                         if (part.functionCall) {
+                            anyToolCalled = true;
                             const call = part.functionCall;
-                            if (call.name === 'provisionAgent') {
+                            
+                            if (call.name === 'searchAreaCodes') {
+                                const args = call.args as any;
+                                console.log(`[WS-Setup] Searching area codes for: ${args.region}`);
+                                
+                                wsSetup.send(JSON.stringify({
+                                    type: 'text', token: "Let me check what area codes are available in your region...", last: false
+                                }));
+
+                                try {
+                                    const result = await phoneAgentService.searchAvailableAreaCodes(args.region);
+                                    session.contents.push({
+                                        role: 'user',
+                                        parts: [{
+                                            functionResponse: {
+                                                name: 'searchAreaCodes',
+                                                response: result
+                                            }
+                                        }]
+                                    });
+                                } catch (e: any) {
+                                    console.error('[WS-Setup] searchAreaCodes tool error:', e);
+                                    session.contents.push({
+                                        role: 'user',
+                                        parts: [{ functionResponse: { name: 'searchAreaCodes', response: { error: e.message }}}]
+                                    });
+                                }
+                            } else if (call.name === 'deleteAgent') {
+                                const args = call.args as any;
+                                const targetNumber = normalizePhoneNumber(args.phoneNumber);
+                                console.log(`[WS-Setup] Requested delete for: ${targetNumber} (Caller: ${callerNumber}, UID: ${session.uid})`);
+
+                                wsSetup.send(JSON.stringify({
+                                    type: 'text', token: "I'm releasing that phone number for you now. Just a moment...", last: false
+                                }));
+
+                                try {
+                                    let success = false;
+                                    const firestore = initFirebase();
+                                    
+                                    // Verify ownership if possible
+                                    const userData = session.uid ? await getUserConfig(callerNumber) : null;
+                                    const isOwner = userData?.agentPhoneNumbersList?.includes(targetNumber);
+
+                                    if (isOwner || !session.uid) {
+                                        const released = await phoneAgentService.releaseTwilioNumber(targetNumber);
+                                        if (released && userData) {
+                                            // Handle Firestore cleanup for existing user
+                                            const newList = userData.agentPhoneNumbersList.filter((n: string) => n !== targetNumber);
+                                            const newConfigs = { ...userData.agentPhoneConfigs };
+                                            delete newConfigs[targetNumber];
+                                            
+                                            await firestore!.collection('users').doc(userData.uid).update({
+                                                agentPhoneNumbersList: newList,
+                                                agentPhoneConfigs: newConfigs
+                                            });
+                                            success = true;
+                                        } else if (released) {
+                                            // Handle cleanup for unclaimed agents
+                                            await firestore!.collection('unclaimedAgents').doc(targetNumber).delete();
+                                            success = true;
+                                        }
+                                    }
+
+                                    session.contents.push({
+                                        role: 'user',
+                                        parts: [{
+                                            functionResponse: {
+                                                name: 'deleteAgent',
+                                                response: { success }
+                                            }
+                                        }]
+                                    });
+                                } catch (err: any) {
+                                    console.error('[WS-Setup] deleteAgent tool error:', err);
+                                    session.contents.push({
+                                        role: 'user',
+                                        parts: [{
+                                            functionResponse: {
+                                                name: 'deleteAgent',
+                                                response: { success: false, error: err.message || "Failed to delete agent." }
+                                            }
+                                        }]
+                                    });
+                                }
+                            } else if (call.name === 'provisionAgent') {
                                 const args = call.args as any;
                                 console.log(`[WS-Setup] Provisioning Agent for ${callerNumber}: type=${args.agentType}`, args);
 
-                                // Announce we're working on it
                                 wsSetup.send(JSON.stringify({
                                     type: 'text',
                                     token: args.agentType === 'hotline'
@@ -1104,7 +1220,6 @@ CRITICAL INSTRUCTIONS:
                                     }
                                     const numberToBuy = availableNumbers[0].phone_number;
                                     
-                                    // Point webhook to Vercel to buffer Render cold starts
                                     const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://www.freshfront.co';
                                     
                                     const newTwilioNumber = await phoneAgentService.buyTwilioNumber(
@@ -1138,9 +1253,7 @@ CRITICAL INSTRUCTIONS:
                                     }
 
                                     let newConfig: any;
-
                                     if (args.agentType === 'hotline') {
-                                        // ─── HOTLINE PATH ───
                                         newConfig = {
                                             enabled: true,
                                             mode: 'notes',
@@ -1149,7 +1262,6 @@ CRITICAL INSTRUCTIONS:
                                             ownerPhone: callerNumber
                                         };
                                     } else {
-                                        // ─── LEADS PATH ───
                                         const leadFields = (args.dataToCollect || []).map((fieldName: string) => ({
                                             id: Math.random().toString(36).substr(2, 9),
                                             name: fieldName,
@@ -1170,10 +1282,8 @@ CRITICAL INSTRUCTIONS:
                                     if (userRef) {
                                         const newList = [...(userData.agentPhoneNumbersList || [])];
                                         if (!newList.includes(newTwilioNumber)) newList.push(newTwilioNumber);
-
                                         const allConfigs = { ...(userData.agentPhoneConfigs || {}) };
                                         allConfigs[newTwilioNumber] = newConfig;
-
                                         await userRef.update({
                                             agentPhoneNumbersList: newList,
                                             agentPhoneConfigs: allConfigs
@@ -1214,73 +1324,33 @@ CRITICAL INSTRUCTIONS:
                                         }]
                                     });
                                 }
+                            }
+                        }
+                    }
 
-                                // Generate a followup statement to inform the caller of success or failure
-                                const followup = await ai.models.generateContent({
-                                    model: 'gemini-2.0-flash',
-                                    contents: session.contents,
-                                    config: {
-                                        systemInstruction: session.systemPrompt,
-                                        tools: [provisionAgentTool]
-                                    }
-                                });
+                    // If any tool was called, we need to call Gemini again to get the final spoken response
+                    if (anyToolCalled) {
+                        const followup = await ai.models.generateContent({
+                            model: 'gemini-2.0-flash',
+                            contents: session.contents,
+                            config: {
+                                systemInstruction: session.systemPrompt,
+                                tools: [voiceSetupTools]
+                            }
+                        });
 
-                                if (followup.candidates?.[0]?.content) {
-                                    session.contents.push(followup.candidates[0].content);
-                                    const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
-                                    if (textPart?.text) {
-                                        responseText += " " + textPart.text;
-                                    }
-                                }
-                            } else if (call.name === 'searchAreaCodes') {
-                                const args = call.args as any;
-                                console.log(`[WS-Setup] Searching area codes for region: ${args.region}`);
-                                
-                                wsSetup.send(JSON.stringify({
-                                    type: 'text', token: "Let me check what area codes are available in your region...", last: false
-                                }));
-
-                                try {
-                                    const result = await phoneAgentService.searchAvailableAreaCodes(args.region);
-                                    session.contents.push({
-                                        role: 'user',
-                                        parts: [{
-                                            functionResponse: {
-                                                name: 'searchAreaCodes',
-                                                response: result
-                                            }
-                                        }]
-                                    });
-                                } catch (e: any) {
-                                    session.contents.push({
-                                        role: 'user',
-                                        parts: [{ functionResponse: { name: 'searchAreaCodes', response: { error: e.message }}}]
-                                    });
-                                }
-
-                                const followup = await ai.models.generateContent({
-                                    model: 'gemini-2.0-flash',
-                                    contents: session.contents,
-                                    config: {
-                                        systemInstruction: session.systemPrompt,
-                                        tools: [provisionAgentTool]
-                                    }
-                                });
-
-                                if (followup.candidates?.[0]?.content) {
-                                    session.contents.push(followup.candidates[0].content);
-                                    const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
-                                    if (textPart?.text) {
-                                        responseText += " " + textPart.text;
-                                    }
-                                }
+                        if (followup.candidates?.[0]?.content) {
+                            session.contents.push(followup.candidates[0].content);
+                            const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
+                            if (textPart?.text) {
+                                responseText += " " + textPart.text;
                             }
                         }
                     }
 
                     wsSetup.send(JSON.stringify({
                         type: 'text',
-                        token: responseText,
+                        token: responseText.trim(),
                         last: true
                     }));
 
