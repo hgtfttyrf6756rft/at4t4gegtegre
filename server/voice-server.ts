@@ -313,7 +313,7 @@ const projectManagementTools = {
 };
 
 // Store active chat sessions
-const sessions: { [callSid: string]: { contents: any[], uid?: string, agentName?: string, agentInstructions?: string, systemPrompt?: string } } = {};
+const sessions: { [callSid: string]: { contents: any[], uid?: string, toNumber?: string, agentName?: string, agentInstructions?: string, systemPrompt?: string } } = {};
 
 // Helper to normalize phone numbers (E.164 conversion)
 function normalizePhoneNumber(phone: string): string {
