@@ -78,6 +78,12 @@ export interface UserProfile {
   // New multi-number fields
   agentPhoneNumbersList?: string[];
   agentPhoneConfigs?: Record<string, PhoneAgentConfig>;
+
+  // Plan and credits
+  credits?: number;
+  subscribed?: boolean;
+  unlimited?: boolean;
+  subscriptionTier?: 'pro' | 'unlimited';
 }
 
 export interface GroundingChunk {
