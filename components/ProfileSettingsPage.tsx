@@ -473,6 +473,11 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
         buttonSecondary: isDarkMode
             ? 'bg-[#2c2c2e] hover:bg-[#3a3a3c] text-white border border-[#3a3a3c]'
             : 'bg-white hover:bg-gray-50 text-gray-700 border border-gray-300',
+        tabsContainer: isDarkMode
+            ? 'bg-[#2c2c2e]/50 border-[#3a3a3c]'
+            : 'bg-gray-100 border-gray-200',
+        tabButtonActive: 'bg-blue-600 text-white shadow-lg',
+        tabButtonInactive: isDarkMode ? 'text-[#86868b]' : 'text-gray-500 hover:text-gray-700',
     };
 
     const activeConfig = activePhoneTab ? profile.agentPhoneConfigs?.[activePhoneTab] : null;
@@ -677,22 +682,22 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                                     <div className="space-y-4">
                                                         <div>
                                                             <label className={`block text-sm font-semibold mb-2 ${ui.label}`}>Agent Mode</label>
-                                                            <div className="flex bg-[#2c2c2e]/50 p-1 rounded-xl border border-[#3a3a3c] space-x-1">
+                                                            <div className={`flex p-1 rounded-xl border space-x-1 ${ui.tabsContainer}`}>
                                                                 <button
                                                                     onClick={() => updateActivePhoneConfig({ mode: 'projects' })}
-                                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeConfig.mode === 'projects' || !activeConfig.mode ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeConfig.mode === 'projects' || !activeConfig.mode ? ui.tabButtonActive : ui.tabButtonInactive}`}
                                                                 >
                                                                     Projects
                                                                 </button>
                                                                 <button
                                                                     onClick={() => updateActivePhoneConfig({ mode: 'notes' })}
-                                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeConfig.mode === 'notes' || activeConfig.mode === 'note' as any ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeConfig.mode === 'notes' || activeConfig.mode === 'note' as any ? ui.tabButtonActive : ui.tabButtonInactive}`}
                                                                 >
                                                                     Notes
                                                                 </button>
                                                                 <button
                                                                     onClick={() => updateActivePhoneConfig({ mode: 'leads' })}
-                                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeConfig.mode === 'leads' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium transition-all ${activeConfig.mode === 'leads' ? ui.tabButtonActive : ui.tabButtonInactive}`}
                                                                 >
                                                                     Leads
                                                                 </button>
@@ -734,16 +739,16 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                                         <div>
                                                             <div className="flex items-center justify-between mb-2">
                                                                 <label className={`text-sm font-semibold ${ui.label}`}>Agent Voice</label>
-                                                                <div className="flex bg-[#2c2c2e]/50 p-1 rounded-xl border border-[#3a3a3c]">
+                                                                <div className={`flex p-1 rounded-xl border ${ui.tabsContainer}`}>
                                                                     <button
                                                                         onClick={() => updateActivePhoneConfig({ voiceGender: 'female', voiceName: 'Kore' })}
-                                                                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${activeConfig.voiceGender === 'female' || !activeConfig.voiceGender ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${activeConfig.voiceGender === 'female' || !activeConfig.voiceGender ? ui.tabButtonActive : ui.tabButtonInactive}`}
                                                                     >
                                                                         Female
                                                                     </button>
                                                                     <button
                                                                         onClick={() => updateActivePhoneConfig({ voiceGender: 'male', voiceName: 'Fenrir' })}
-                                                                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${activeConfig.voiceGender === 'male' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all ${activeConfig.voiceGender === 'male' ? ui.tabButtonActive : ui.tabButtonInactive}`}
                                                                     >
                                                                         Male
                                                                     </button>
@@ -820,22 +825,22 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                                                     {/* Lead Destination */}
                                                                     <div className="pt-2 border-t border-[#3a3a3c]/30">
                                                                         <label className={`block text-xs font-semibold mb-2 mt-2 ${ui.label}`}>Lead Destination</label>
-                                                                        <div className="flex bg-[#2c2c2e]/50 p-1 rounded-xl border border-[#3a3a3c] space-x-1 mb-3">
+                                                                        <div className={`flex p-1 rounded-xl border space-x-1 mb-3 ${ui.tabsContainer}`}>
                                                                             <button
                                                                                 onClick={() => updateActivePhoneConfig({ leadDestination: 'app' })}
-                                                                                className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeConfig.leadDestination === 'app' || !activeConfig.leadDestination ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                                className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeConfig.leadDestination === 'app' || !activeConfig.leadDestination ? ui.tabButtonActive : ui.tabButtonInactive}`}
                                                                             >
                                                                                 Dashboard
                                                                             </button>
                                                                             <button
                                                                                 onClick={() => updateActivePhoneConfig({ leadDestination: 'email' })}
-                                                                                className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeConfig.leadDestination === 'email' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                                className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeConfig.leadDestination === 'email' ? ui.tabButtonActive : ui.tabButtonInactive}`}
                                                                             >
                                                                                 Email
                                                                             </button>
                                                                             <button
                                                                                 onClick={() => updateActivePhoneConfig({ leadDestination: 'sms' })}
-                                                                                className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeConfig.leadDestination === 'sms' ? 'bg-blue-600 text-white shadow-lg' : 'text-[#86868b]'}`}
+                                                                                className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${activeConfig.leadDestination === 'sms' ? ui.tabButtonActive : ui.tabButtonInactive}`}
                                                                             >
                                                                                 SMS
                                                                             </button>
