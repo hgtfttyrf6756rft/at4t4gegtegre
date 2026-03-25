@@ -462,12 +462,27 @@ const server = http.createServer(async (req, res) => {
 
             console.log(`[TwiML] Incoming call to ${to} from ${from}`);
 
+            // Setup Mode Trigger (Strictly for setup agents per user request)
+            // Checked FIRST to avoid any expensive Firestore lookups or initializations
+            if (to === '+16474904049') {
+                const targetUrl = DOMAIN ? `https://${DOMAIN}/twiml-setup` : `http://localhost:${PORT}/twiml-setup`;
+                const xmlRedirect = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Redirect method="POST">${targetUrl}</Redirect>
+</Response>`;
+                console.log(`[TwiML] Setup number detected. Redirecting instantly to ${targetUrl}.`);
+                res.writeHead(200, { 'Content-Type': 'text/xml' });
+                res.end(xmlRedirect);
+                return;
+            }
+
             let welcomeGreeting = WELCOME_GREETING;
             let voice = 'en-US-Journey-F';
             const ttsProvider = 'Google';
             let isNoteMode = false;
 
             try {
+                // This call has a 3s race condition built-in
                 const userData = await getUserConfig(to);
                 const normalizedTarget = normalizePhoneNumber(to);
                 const activeConfig = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
@@ -494,18 +509,6 @@ const server = http.createServer(async (req, res) => {
                 const xmlRedirect = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
     <Redirect method="POST">${noteTwimlUrl}</Redirect>
-</Response>`;
-                res.writeHead(200, { 'Content-Type': 'text/xml' });
-                res.end(xmlRedirect);
-                return;
-            }
-
-            // Setup Mode Trigger (Strictly for setup agents per user request)
-            if (to === '+16474904049') {
-                const targetUrl = DOMAIN ? `https://${DOMAIN}/twiml-setup` : `http://localhost:${PORT}/twiml-setup`;
-                const xmlRedirect = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Redirect method="POST">${targetUrl}</Redirect>
 </Response>`;
                 res.writeHead(200, { 'Content-Type': 'text/xml' });
                 res.end(xmlRedirect);
@@ -1213,6 +1216,7 @@ CRITICAL INSTRUCTIONS:
 - You are on a phone call. Be conversational, concise, and friendly. No markdown.
 - Ask one or two questions at a time — do not dump all questions at once.
 - Only call 'provisionAgent' AFTER they have explicitly chosen an area code. Pass their chosen area code as the 'areaCode' argument.
+- AFTER SUCCESSFUL PROVISIONING: You MUST instruct the caller to go to freshfront.co to create an account. Explain that they need to sign up with their phone number to manage their new agent, view leads, and enable context training via SMS.
 - If the caller sounds unsure, briefly explain the difference again.
 - Never use asterisks, bullet points, or emojis in your speech.`;
 
