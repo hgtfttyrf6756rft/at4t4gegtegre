@@ -1334,3 +1334,53 @@ export async function getOrCreateVerifyService(friendlyName = 'FreshFront Verify
     const { sid } = await createRes.json();
     return sid;
 }
+export async function provisionNewAgent(params: { phoneNumber: string; agentType: 'leads' | 'notes'; companyName?: string; city?: string; state?: string; callerNumber: string }) {
+    const { phoneNumber, agentType, companyName, city, state, callerNumber } = params;
+    
+    // 1. Provision the number via Twilio (webhooks are auto-configured in buyTwilioNumber)
+    // We use a placeholder APP_URL if not set, buyTwilioNumber will handle it
+    const appUrl = process.env.APP_URL || 'https://freshfront.co';
+    const finalNumber = await buyTwilioNumber(phoneNumber, appUrl);
+
+    // 2. Update Firestore
+    const db = getFirestore();
+    // Use the callerNumber (normalized) to find the user session/doc
+    const normalizedFrom = callerNumber; // Already normalized by caller
+    const noPlusFrom = normalizedFrom.startsWith('+') ? normalizedFrom.substring(1) : normalizedFrom;
+    const searchValues = [...new Set([callerNumber, normalizedFrom, noPlusFrom, `+${noPlusFrom}`])].slice(0, 4);
+    
+    const userSnap = await db.collection('users')
+        .where('personalPhoneNumber', 'in', searchValues).limit(1).get();
+
+    const config = {
+        mode: agentType === 'leads' ? 'leads' : 'notes',
+        companyName: companyName || '',
+        city: city || '',
+        state: state || '',
+        enabled: true,
+        createdAt: Date.now()
+    };
+
+    if (!userSnap.empty) {
+        const userDoc = userSnap.docs[0];
+        const userData = userDoc.data();
+        const newList = [...(userData.agentPhoneNumbersList || [])];
+        if (!newList.includes(finalNumber)) newList.push(finalNumber);
+
+        await userDoc.ref.update({
+            agentPhoneNumber: finalNumber,
+            agentPhoneConfig: config,
+            agentPhoneNumbersList: newList,
+            [`agentPhoneConfigs.${finalNumber}`]: config
+        });
+    } else {
+        // Unclaimed agent (user called but hasn't linked yet)
+        await db.collection('unclaimedAgents').doc(finalNumber).set({
+            personalPhoneNumber: callerNumber,
+            agentPhoneConfig: config,
+            timestamp: Date.now()
+        });
+    }
+
+    return { success: true, phoneNumber: finalNumber, message: `Agent provisioned successfully for ${finalNumber}` };
+}
