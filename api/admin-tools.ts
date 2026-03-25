@@ -95,6 +95,14 @@ export default async function handler(req: any, res: any) {
 async function executeTool(tool: string, args: any): Promise<any> {
     switch (tool) {
 
+        case 'update_user': {
+            if (!args.userId || !args.updates) return { error: 'Missing userId or updates' };
+            const ref = db.collection('users').doc(args.userId);
+            const updates = { ...args.updates, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+            await ref.update(updates);
+            return { success: true };
+        }
+
         // ── Search ─────────────────────────────────────────────────────
         case 'search_users': {
             const snap = await db.collection('users').limit(500).get();
