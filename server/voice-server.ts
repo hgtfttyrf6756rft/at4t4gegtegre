@@ -532,7 +532,7 @@ const server = http.createServer(async (req, res) => {
     <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay 
             url="${WS_URL}" 
-            welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
+            welcomeGreeting=""
             ttsProvider="${ttsProvider}"
             voice="${voice}"
         >
@@ -588,7 +588,7 @@ const server = http.createServer(async (req, res) => {
     <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay 
             url="${WS_NOTE_URL}" 
-            welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
+             welcomeGreeting=""
             ttsProvider="Google"
             voice="${voice}"
         >
@@ -631,7 +631,7 @@ const server = http.createServer(async (req, res) => {
     <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay 
             url="${WS_SETUP_URL}" 
-             welcomeGreeting="Welcome to Freshfront! Please wait while I connect you to our agent setup assistant."
+             welcomeGreeting=""
             ttsProvider="Google"
             voice="en-US-Journey-F"
         >
@@ -671,7 +671,7 @@ const server = http.createServer(async (req, res) => {
     <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay
             url="${WS_PROJECTS_URL}"
-            welcomeGreeting="Hey! Welcome back. You can create projects, add notes, tasks, calendar events, or generate images. What would you like to do?"
+            welcomeGreeting=""
             ttsProvider="Google"
             voice="en-US-Journey-F"
         >
@@ -812,6 +812,12 @@ wss.on('connection', (wsMain: WebSocket) => {
                     agentInstructions,
                     systemPrompt
                 };
+
+                // Trigger Gemini to start the conversation automatically (replaces TwiML greeting)
+                wsMain.emit('message', JSON.stringify({
+                    type: 'prompt',
+                    textPrompt: "Hello! I'm here. Please start the conversation and introduce yourself based on your instructions."
+                }));
 
             } else if (data.type === 'prompt') {
                 if (!callSid || !sessions[callSid]) return;
@@ -1050,6 +1056,12 @@ wssNote.on('connection', (wsNote: WebSocket) => {
                 // Store the system prompt on the WebSocket connection for use in prompt handling
                 (wsNote as any).__noteSystemPrompt = noteSystemPrompt;
                 console.log(`[WS-Note] System prompt ready (${noteSystemPrompt.length} chars)`);
+
+                // Trigger Gemini to start the conversation automatically (replaces TwiML greeting)
+                wsNote.emit('message', JSON.stringify({
+                    type: 'prompt',
+                    textPrompt: "Hi, I'm calling for my notes assistant. Please say hello and ask how you can help with my notes."
+                }));
 
             } else if (data.type === 'prompt') {
                 const userPrompt = data.voicePrompt || data.textPrompt || '';
@@ -1448,6 +1460,12 @@ When calling addTask, the priority MUST be one of: low, medium, high.
 After each successful action, confirm it was saved and mention that an SMS confirmation was sent.`;
 
                 sessions[callSid!] = { contents: [], systemPrompt, uid: callerUid };
+
+                // Trigger Gemini to start the conversation automatically (replaces TwiML greeting)
+                wsProjects.emit('message', JSON.stringify({
+                    type: 'prompt',
+                    textPrompt: `Hi, I'm calling for my project assistant. Please greet me by name (${callerName}) and ask what I'd like to do with my projects today.`
+                }));
 
             } else if (data.type === 'prompt') {
                 if (!callSid || !sessions[callSid]) return;
