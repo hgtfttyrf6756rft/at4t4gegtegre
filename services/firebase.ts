@@ -150,6 +150,10 @@ export interface FirestoreUser {
   lastLoginAt: Timestamp | null;
   provider: string;
   organizationId?: string | null;
+  credits?: number;
+  subscribed?: boolean;
+  unlimited?: boolean;
+  subscriptionTier?: 'free' | 'pro' | 'unlimited';
 }
 
 // Save user to Firestore "users" collection
@@ -164,7 +168,7 @@ export const saveUserToFirestore = async (user: User): Promise<void> => {
       email: user.email ? user.email.toLowerCase() : null,
       displayName: user.displayName,
       photoURL: user.photoURL,
-      createdAt: userDoc.exists() ? userDoc.data().createdAt : serverTimestamp() as Timestamp,
+      createdAt: (userDoc.exists() && userDoc.data()?.createdAt) ? userDoc.data().createdAt : serverTimestamp() as Timestamp,
       lastLoginAt: serverTimestamp() as Timestamp,
       provider: user.providerData[0]?.providerId || 'unknown'
     };
@@ -2215,7 +2219,8 @@ export const getAllUsersForAdmin = async (): Promise<FirestoreUser[]> => {
   try {
     const usersRef = collection(db, "users");
     const q = query(usersRef, orderBy("createdAt", "desc"), limit(1000));
-    const snapshot = await getDocs(q);
+    // Use getDocsFromServer to bypass local cache and see latest console changes
+    const snapshot = await getDocsFromServer(q);
 
     const users: FirestoreUser[] = [];
     snapshot.forEach((doc) => {
@@ -2236,7 +2241,8 @@ export const getAllProjectsForAdmin = async (): Promise<ResearchProject[]> => {
   try {
     const projectsGroupRef = collectionGroup(db, "projects");
     const q = query(projectsGroupRef, orderBy("lastModified", "desc"), limit(2000));
-    const snapshot = await getDocs(q);
+    // Use getDocsFromServer to bypass local cache and see latest console changes
+    const snapshot = await getDocsFromServer(q);
 
     const projects: ResearchProject[] = [];
     snapshot.forEach((docSnap) => {
