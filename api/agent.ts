@@ -61,6 +61,22 @@ const json = (data: any, status = 200) =>
 
 const error = (msg: string, status = 400) => json({ error: msg }, status);
 
+const normalizeToE164 = (phone: string): string => {
+    if (!phone) return '';
+    // If already potentially E.164 (starts with +), just strip non-digits except +
+    if (phone.trim().startsWith('+')) {
+        return '+' + phone.replace(/\D/g, '');
+    }
+    const digits = phone.replace(/\D/g, '');
+    if (!digits) return '';
+    // 10 digits -> assume US/Canada
+    if (digits.length === 10) return `+1${digits}`;
+    // 11 digits starting with 1 -> assume US/Canada
+    if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+    // Fallback: just prepend +
+    return `+${digits}`;
+};
+
 // ─── System prompt for the plugin generator (from assistant-studio.ts) ───────
 const buildSystemPrompt = (slot: string, relevantDocs: string) => `
 You are an AI assistant that writes React plugin components for the "Assistant Studio" feature.
@@ -141,8 +157,12 @@ export default {
             if (request.method !== 'POST') return error('Method not allowed', 405);
             try {
                 const body = await request.json().catch(() => ({}));
-                const phoneNumber = body.phoneNumber;
+                let phoneNumber = body.phoneNumber;
                 if (!phoneNumber) return error('Missing phoneNumber');
+
+                // Normalize to E.164 for Twilio Verify
+                phoneNumber = normalizeToE164(phoneNumber);
+                if (!phoneNumber || phoneNumber.length < 8) return error('Invalid phone number format. Please include country code or use 10-digit US format.');
 
                 const authHeader = request.headers.get('Authorization');
                 if (!authHeader?.startsWith('Bearer ')) return error('Unauthorized', 401);
