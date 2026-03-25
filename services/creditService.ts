@@ -1,5 +1,5 @@
 import { doc, getDoc, setDoc, updateDoc, increment } from 'firebase/firestore';
-import { db, auth } from './firebase.js';
+import { db, auth, getDocFromServer } from './firebase.js';
 
 // ============================================================================
 // CREDIT CONSTANTS
@@ -137,7 +137,8 @@ export async function isUnlimitedUser(): Promise<boolean> {
 
     try {
         const userRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userRef);
+        // Use getDocFromServer to bypass local cache and see console changes immediately
+        const userDoc = await getDocFromServer(userRef);
 
         if (userDoc.exists()) {
             const data = userDoc.data();
@@ -165,7 +166,8 @@ export async function getUserCredits(): Promise<number> {
 
     try {
         const userRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userRef);
+        // Use getDocFromServer to bypass local cache and see console changes immediately
+        const userDoc = await getDocFromServer(userRef);
 
         if (userDoc.exists()) {
             const data = userDoc.data();
@@ -231,7 +233,8 @@ export async function deductCredits(operation: CreditOperation, costMultiplier: 
 
     try {
         const userRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userRef);
+        // Use getDocFromServer to bypass local cache and see console changes immediately
+        const userDoc = await getDocFromServer(userRef);
 
         if (!userDoc.exists()) {
             console.error('User document does not exist');
