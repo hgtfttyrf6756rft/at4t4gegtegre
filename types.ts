@@ -56,6 +56,9 @@ export interface PhoneAgentConfig {
   voiceName?: string;
   humanHandoffEnabled?: boolean;
   humanHandoffNumber?: string;
+  followUpSms?: string;
+  appointmentBookingEnabled?: boolean;
+  calendarId?: string;
 }
 
 export interface UserProfile {
