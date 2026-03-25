@@ -618,7 +618,7 @@ const server = http.createServer(async (req, res) => {
     <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay 
             url="${WS_NOTE_URL}" 
-             welcomeGreeting=""
+             welcomeGreeting="Hi, I'm calling for my notes assistant. How can I help with your notes today?"
             ttsProvider="Google"
             voice="${voice}"
         >
@@ -661,7 +661,7 @@ const server = http.createServer(async (req, res) => {
     <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay 
             url="${WS_SETUP_URL}" 
-             welcomeGreeting=""
+             welcomeGreeting="Hi! Welcome to the Freshfront agent setup assistant. Which type of phone agent would you like to create today?"
             ttsProvider="Google"
             voice="en-US-Journey-F"
         >
@@ -701,7 +701,7 @@ const server = http.createServer(async (req, res) => {
     <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay
             url="${WS_PROJECTS_URL}"
-            welcomeGreeting=""
+            welcomeGreeting="Hi! I'm calling for your project assistant. How can I help you manage your projects today?"
             ttsProvider="Google"
             voice="en-US-Journey-F"
         >
@@ -1091,28 +1091,26 @@ wssNote.on('connection', (wsNote: WebSocket) => {
                     `\n\n--- USER'S NOTES (${notesCount} total) ---\n${notesContext}\n--- END OF NOTES ---`
                 ].filter(Boolean).join('\n');
 
-                // Store the system prompt on the WebSocket connection for use in prompt handling
-                (wsNote as any).__noteSystemPrompt = noteSystemPrompt;
-                console.log(`[WS-Note] System prompt ready (${noteSystemPrompt.length} chars)`);
-
-                // Trigger Gemini to start the conversation automatically (replaces TwiML greeting)
-                wsNote.emit('message', JSON.stringify({
-                    type: 'prompt',
-                    textPrompt: "Hi, I'm calling for my notes assistant. Please say hello and ask how you can help with my notes."
-                }));
+                sessions[callSid!] = {
+                    contents: [],
+                    systemPrompt: noteSystemPrompt,
+                    uid: userData?.uid
+                };
+                console.log(`[WS-Note] Session ready for call: ${callSid}`);
 
             } else if (data.type === 'prompt') {
+                if (!callSid || !sessions[callSid]) return;
                 const userPrompt = data.voicePrompt || data.textPrompt || '';
-                const systemPrompt = (wsNote as any).__noteSystemPrompt || '';
+                const session = sessions[callSid];
                 console.log(`[WS-Note] User (${callSid}): ${userPrompt}`);
 
+                session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
+
                 try {
-                    // Use generateContent (single-turn) since Twilio ConversationRelay
-                    // manages the audio loop — we just respond with text each turn
                     const result = await ai.models.generateContentStream({
                         model: 'gemini-2.0-flash',
-                        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-                        config: { systemInstruction: systemPrompt }
+                        contents: session.contents,
+                        config: { systemInstruction: session.systemPrompt }
                     });
 
                     let fullResponse = '';
@@ -1127,9 +1125,11 @@ wssNote.on('connection', (wsNote: WebSocket) => {
                     if (!fullResponse) {
                         wsNote.send(JSON.stringify({ type: 'text', token: "I couldn't find an answer in your notes.", last: true }));
                     } else {
+                        // Bug Fix: save model response to history
+                        session.contents.push({ role: 'model', parts: [{ text: fullResponse }] });
                         wsNote.send(JSON.stringify({ type: 'text', token: '', last: true }));
                     }
-                    console.log(`[WS-Note] Gemini (${callSid}): ${fullResponse.substring(0, 80)}...`);
+                    console.log(`[WS-Note] Gemini (${callSid}): ${fullResponse.substring(0, 80)}... [history: ${session.contents.length} turns]`);
                 } catch (apiError) {
                     console.error(`[WS-Note] Gemini API Error for ${callSid}:`, apiError);
                     wsNote.send(JSON.stringify({ type: 'text', token: "I'm sorry, I had trouble looking up your notes.", last: true }));
@@ -1231,174 +1231,18 @@ CRITICAL INSTRUCTIONS:
                     uid: userData?.uid
                 };
 
-                // Trigger Gemini to start the conversation automatically
-                wsSetup.emit('message', JSON.stringify({
-                    type: 'prompt',
-                    textPrompt: "Hi, I just connected. Please introduce yourself and start the setup process according to your instructions."
-                }));
-
-            } else if (data.type === 'prompt') {
-                if (!callSid || !sessions[callSid]) return;
-
-                const userPrompt = data.voicePrompt || data.textPrompt;
-                console.log(`[WS-Setup] User (${callSid}): ${userPrompt}`);
-
-                const session = sessions[callSid];
-                session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
-
-                try {
-                    const result = await ai.models.generateContentStream({
-                        model: 'gemini-2.0-flash',
-                        contents: session.contents,
-                        config: {
-                            systemInstruction: session.systemPrompt,
-                            tools: [voiceSetupTools]
-                        }
-                    });
-
-                    let responseText = '';
-                    let anyToolCalled = false;
-
-                    for await (const chunk of result) {
-                        const text = chunk.text;
-                        if (text) {
-                            responseText += text;
-                            wsSetup.send(JSON.stringify({ type: 'text', token: text, last: false }));
-                        }
-
-                        const calls = chunk.functionCalls;
-                        if (calls && calls.length > 0) {
-                            anyToolCalled = true;
-                            for (const call of calls) {
-                                const args = call.args as any;
-                                if (call.name === 'searchAreaCodes') {
-                                    console.log(`[WS-Setup] Searching area codes for: ${args.region}`);
-                                    wsSetup.send(JSON.stringify({ type: 'text', token: "Checking available area codes...", last: false }));
-
-                                    try {
-                                        const res = await phoneAgentService.searchAvailableAreaCodes(args.region);
-                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'searchAreaCodes', response: res } }] });
-                                    } catch (e: any) {
-                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'searchAreaCodes', response: { error: e.message } } }] });
-                                    }
-                                } else if (call.name === 'provisionAgent') {
-                                    wsSetup.send(JSON.stringify({ type: 'text', token: "Setting up your agent now...", last: false }));
-                                    try {
-                                        const res = await phoneAgentService.provisionNewAgent({ ...args, callerNumber });
-                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'provisionAgent', response: res } }] });
-                                    } catch (e: any) {
-                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'provisionAgent', response: { error: e.message } } }] });
-                                    }
-                                } else if (call.name === 'deleteAgent') {
-                                    const targetNumber = normalizePhoneNumber(args.phoneNumber);
-                                    wsSetup.send(JSON.stringify({ type: 'text', token: "Releasing that number...", last: false }));
-
-                                    try {
-                                        let success = false;
-                                        const firestore = initFirebase();
-                                        const userData = session.uid ? await getUserConfig(callerNumber) : null;
-                                        if (userData?.agentPhoneNumbersList?.includes(targetNumber) || !session.uid) {
-                                            const released = await phoneAgentService.releaseTwilioNumber(targetNumber);
-                                            if (released && firestore) {
-                                                if (userData) {
-                                                    const newList = userData.agentPhoneNumbersList.filter((n: string) => n !== targetNumber);
-                                                    const newConfigs = { ...userData.agentPhoneConfigs };
-                                                    delete newConfigs[targetNumber];
-                                                    await firestore.collection('users').doc(userData.uid).update({ agentPhoneNumbersList: newList, agentPhoneConfigs: newConfigs });
-                                                } else {
-                                                    await firestore.collection('unclaimedAgents').doc(targetNumber).delete();
-                                                }
-                                                success = true;
-                                            }
-                                        }
-                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'deleteAgent', response: { success } } }] });
-                                    } catch (e: any) {
-                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'deleteAgent', response: { error: e.message } } }] });
-                                    }
-                                } else if (call.name === 'getAgentAnalytics') {
-                                    const { timeRange, type } = args;
-                                    const firestore = initFirebase();
-                                    let resultContext = "No analytics data found.";
-
-                                    if (firestore && session.uid) {
-                                        try {
-                                            const now = new Date();
-                                            let startTime = new Date();
-                                            if (timeRange === 'today') startTime.setHours(0, 0, 0, 0);
-                                            else if (timeRange === 'week') startTime.setDate(now.getDate() - 7);
-                                            else if (timeRange === 'month') startTime.setDate(now.getDate() - 30);
-
-                                            const startTs = startTime.getTime();
-
-                                            if (type === 'leads') {
-                                                const leadsRef = firestore.collection('users').doc(session.uid).collection('phoneAgentLeads');
-                                                const snapshot = await leadsRef.where('timestamp', '>=', startTs).get();
-                                                const count = snapshot.size;
-                                                
-                                                const recentLeads: string[] = [];
-                                                snapshot.docs.slice(0, 3).forEach(doc => {
-                                                    const d = doc.data();
-                                                    recentLeads.push(`${d.name || 'Unknown'} (${d.phoneNumber || 'No phone'}) - ${d.inquiry || 'No inquiry'}`);
-                                                });
-
-                                                resultContext = `You have received ${count} leads in the last ${timeRange}. 
-                                                                ${recentLeads.length > 0 ? "Recent leads include: " + recentLeads.join('; ') : ""}`;
-                                            } else if (type === 'conversations') {
-                                                const historyRef = firestore.collection('users').doc(session.uid).collection('phoneAgentHistory');
-                                                const snapshot = await historyRef.where('timestamp', '>=', startTs).limit(20).get();
-                                                
-                                                const transcripts = snapshot.docs.map(doc => doc.data().text || "").filter(Boolean);
-                                                resultContext = `Analyzed ${snapshot.size} recent message exchanges. Themes detected: ${transcripts.length > 0 ? "Callers are mostly saying: " + transcripts.join(' | ').substring(0, 300) + "..." : "No clear themes found yet."}`;
-                                            }
-                                        } catch (err) {
-                                            console.error("[WS-Setup] Analytics error:", err);
-                                            resultContext = "Error fetching analytics data.";
-                                        }
-                                    } else {
-                                        resultContext = "User account not linked or Firestore unavailable. Analytics unavailable.";
-                                    }
-
-                                    session.contents.push({
-                                        role: 'user',
-                                        parts: [{
-                                            functionResponse: {
-                                                name: call.name,
-                                                response: { content: resultContext }
-                                            }
-                                        }]
-                                    });
-                                }
-                            }
-                        }
-                    }
-
-                    // If any tool was called, we need to call Gemini again to get the final spoken response
-                    if (anyToolCalled) {
-                        const followup = await ai.models.generateContent({
-                            model: 'gemini-2.0-flash',
-                            contents: session.contents,
-                            config: {
-                                systemInstruction: session.systemPrompt,
-                                tools: [voiceSetupTools]
-                            }
-                        });
-
-                        if (followup.candidates?.[0]?.content) {
-                            session.contents.push(followup.candidates[0].content);
-                            const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
-                            if (textPart?.text) {
-                                responseText += " " + textPart.text;
-                            }
-                        }
-                    }
-
                     wsSetup.send(JSON.stringify({
                         type: 'text',
                         token: responseText.trim(),
                         last: true
                     }));
 
-                    console.log(`[WS-Setup] Gemini (${callSid}): ${responseText}`);
+                    // Bug Fix: save model response to history
+                    if (responseText) {
+                        session.contents.push({ role: 'model', parts: [{ text: responseText.trim() }] });
+                    }
+
+                    console.log(`[WS-Setup] Gemini (${callSid}): ${responseText} [history: ${session.contents.length} turns]`);
                 } catch (apiError) {
                     console.error(`[WS-Setup] Gemini API Error for ${callSid}:`, apiError);
                 }
@@ -1499,184 +1343,14 @@ After each successful action, confirm it was saved and mention that an SMS confi
 
                 sessions[callSid!] = { contents: [], systemPrompt, uid: callerUid };
 
-                // Trigger Gemini to start the conversation automatically (replaces TwiML greeting)
-                wsProjects.emit('message', JSON.stringify({
-                    type: 'prompt',
-                    textPrompt: `Hi, I'm calling for my project assistant. Please greet me by name (${callerName}) and ask what I'd like to do with my projects today.`
-                }));
-
-            } else if (data.type === 'prompt') {
-                if (!callSid || !sessions[callSid]) return;
-
-                const userPrompt = data.voicePrompt || data.textPrompt;
-                const session = sessions[callSid];
-                console.log(`[WS-Projects] User (${callSid}): ${userPrompt}`);
-
-                session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
-
-                try {
-                    const firestore = initFirebase();
-                    const result = await ai.models.generateContentStream({
-                        model: 'gemini-2.0-flash',
-                        contents: session.contents,
-                        config: {
-                            systemInstruction: session.systemPrompt,
-                            tools: callerUid ? [projectManagementTools] : []
-                        }
-                    });
-
-                    let responseText = '';
-                    let anyToolCalled = false;
-
-                    for await (const chunk of result) {
-                        const text = chunk.text;
-                        if (text) {
-                            responseText += text;
-                            wsProjects.send(JSON.stringify({ type: 'text', token: text, last: false }));
-                        }
-
-                        const calls = chunk.functionCalls;
-                        if (calls && calls.length > 0 && firestore && callerUid) {
-                            anyToolCalled = true;
-                            for (const call of calls) {
-                                let toolResult: any = { success: false };
-                                let smsBody = '';
-
-                                try {
-                                    if (call.name === 'listProjects') {
-                                        const snap = await firestore.collection('users').doc(callerUid)
-                                            .collection('projects').orderBy('lastModified', 'desc').limit(15).get();
-                                        projectsCache = snap.docs.map(d => ({ id: d.id, name: d.data().name || 'Untitled' }));
-                                        const list = projectsCache.map((p, i) => `${i + 1}. ${p.name}`).join(', ');
-                                        toolResult = { success: true, projects: projectsCache.map(p => p.name), summary: list };
-
-                                    } else if (call.name === 'createProject') {
-                                        const { name, description } = call.args as any;
-                                        const now = Date.now();
-                                        const newId = `${now}-${Math.random().toString(36).slice(2, 8)}`;
-                                        const newProject = {
-                                            id: newId, name, description: description || '', createdAt: now,
-                                            lastModified: now, researchSessions: [], draftResearchSessions: [],
-                                            tasks: [], notes: [], knowledgeBase: [], aiInsights: [],
-                                            projectConversations: [], newsArticles: [], pinnedAssetIds: [],
-                                            ownerUid: callerUid
-                                        };
-                                        await firestore.collection('users').doc(callerUid)
-                                            .collection('projects').doc(newId).set(newProject);
-                                        projectsCache.unshift({ id: newId, name });
-                                        toolResult = { success: true, projectId: newId, name };
-                                        smsBody = `✅ Project created: "${name}"\nView it at freshfront.co/projects`;
-
-                                    } else if (call.name === 'addNote') {
-                                        const { projectId, title, content } = call.args as any;
-                                        const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
-                                        const noteId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                                        const note = {
-                                            id: noteId, title, content, color: null, pinned: false,
-                                            aiGenerated: false, aiSuggestions: [], tags: [],
-                                            linkedResearchId: null, createdAt: Date.now(), lastModified: Date.now()
-                                        };
-                                        await firestore.collection('users').doc(callerUid)
-                                            .collection('projects').doc(projectId)
-                                            .update({ notes: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(note) });
-                                        toolResult = { success: true, noteId, projectId };
-                                        smsBody = `📝 Note added to "${projectName}":\n"${title}" — ${content.substring(0, 80)}${content.length > 80 ? '...' : ''}`;
-
-                                    } else if (call.name === 'addTask') {
-                                        const { projectId, title, description: desc, priority } = call.args as any;
-                                        const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
-                                        const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                                        const task = {
-                                            id: taskId, title, description: desc || '', status: 'todo',
-                                            priority: (['low', 'medium', 'high'].includes(priority) ? priority : 'medium'),
-                                            order: 0, createdAt: Date.now(), lastModified: Date.now(),
-                                            aiGenerated: false, tags: []
-                                        };
-                                        await firestore.collection('users').doc(callerUid)
-                                            .collection('projects').doc(projectId)
-                                            .update({ tasks: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(task) });
-                                        toolResult = { success: true, taskId, projectId };
-                                        smsBody = `✅ Task added to "${projectName}":\n"${title}" (${task.priority} priority)`;
-
-                                    } else if (call.name === 'addCalendarEvent') {
-                                        const { projectId, title, date, description: desc } = call.args as any;
-                                        const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
-                                        const eventId = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                                        let dateTs: number;
-                                        try { dateTs = new Date(date).getTime() || Date.now(); } catch { dateTs = Date.now(); }
-                                        const event = {
-                                            id: eventId, title, date: dateTs, description: desc || '',
-                                            createdAt: Date.now(), source: 'voice'
-                                        };
-                                        await firestore.collection('users').doc(callerUid)
-                                            .collection('projects').doc(projectId)
-                                            .update({ calendarEvents: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(event) });
-                                        toolResult = { success: true, eventId, projectId };
-                                        const dateStr = new Date(dateTs).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-                                        smsBody = `📅 Event added to "${projectName}":\n"${title}" on ${dateStr}`;
-
-                                    } else if (call.name === 'generateImage') {
-                                        const { projectId, prompt } = call.args as any;
-                                        const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
-                                        try {
-                                            const imgResp = await ai.models.generateImages({
-                                                model: 'imagen-3.0-generate-002',
-                                                prompt,
-                                                config: { numberOfImages: 1, aspectRatio: '16:9' }
-                                            });
-                                            const imgBytes = imgResp.generatedImages?.[0]?.image?.imageBytes;
-                                            if (imgBytes) {
-                                                const dataUri = `data:image/png;base64,${imgBytes}`;
-                                                const imageAsset = {
-                                                    id: `img-${Date.now()}`, prompt, url: dataUri,
-                                                    createdAt: Date.now(), source: 'voice', type: 'image/png'
-                                                };
-                                                await firestore.collection('users').doc(callerUid)
-                                                    .collection('projects').doc(projectId)
-                                                    .update({ generatedImages: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(imageAsset) });
-                                                toolResult = { success: true, projectId, prompt };
-                                                smsBody = `🎨 Image generated for "${projectName}"!\nPrompt: "${prompt.substring(0, 60)}${prompt.length > 60 ? '...' : ''}"\nView it in the Assets tab.`;
-                                            }
-                                        } catch (imgErr) {
-                                            console.error('[WS-Projects] Image generation failed:', imgErr);
-                                            toolResult = { success: false, error: 'Image generation failed' };
-                                        }
-                                    }
-                                } catch (toolErr: any) {
-                                    console.error(`[WS-Projects] Tool ${call.name} error:`, toolErr);
-                                    toolResult = { success: false, error: toolErr.message };
-                                }
-
-                                if (smsBody && callerNumber) {
-                                    const smsFrom = '+16474904049';
-                                    sendSms(callerNumber, smsFrom, smsBody).catch(e => console.error('[WS-Projects] SMS error:', e));
-                                }
-
-                                session.contents.push({
-                                    role: 'user',
-                                    parts: [{ functionResponse: { name: call.name, response: toolResult } }]
-                                });
-                            }
-                        }
-                    }
-
-                    if (anyToolCalled) {
-                        const followup = await ai.models.generateContentStream({
-                            model: 'gemini-2.0-flash',
-                            contents: session.contents,
-                            config: { systemInstruction: session.systemPrompt, tools: [projectManagementTools] }
-                        });
-                        for await (const chunk of followup) {
-                            const text = chunk.text;
-                            if (text) {
-                                responseText += text;
-                                wsProjects.send(JSON.stringify({ type: 'text', token: text, last: false }));
-                            }
-                        }
-                    }
-
                     wsProjects.send(JSON.stringify({ type: 'text', token: '', last: true }));
-                    console.log(`[WS-Projects] Gemini (${callSid}): ${responseText.substring(0, 80)}`);
+
+                    // Bug Fix: save model response to history
+                    if (responseText) {
+                        session.contents.push({ role: 'model', parts: [{ text: responseText.trim() }] });
+                    }
+
+                    console.log(`[WS-Projects] Gemini (${callSid}): ${responseText.substring(0, 80)} [history: ${session.contents.length} turns]`);
 
                 } catch (apiError) {
                     console.error(`[WS-Projects] Gemini API Error for ${callSid}:`, apiError);
@@ -1908,7 +1582,7 @@ wssLive.on('connection', (wsTwilio: WebSocket) => {
                                     turnComplete: true
                                 });
                             },
-                            onmessage: async (msg: any) => {
+                            onmessage: (msg: any) => {
                                 // ── Audio response → send to Twilio ──────────
                                 const parts = msg?.serverContent?.modelTurn?.parts || [];
                                 for (const part of parts) {
