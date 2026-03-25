@@ -412,8 +412,39 @@ export default {
 
             // 4. IMPORTANT: Detect Voice calls FIRST — before ANY other validation.
             // Twilio Voice webhooks send CallSid + CallStatus but no Body/MessageSid.
-            // This must redirect immediately to the Voice Server.
             const isVoiceCall = !!callSid && (!!callStatus || !bodyStr);
+            
+            // Handle completed call follow-up (triggered via Connect action or status callback)
+            if (isVoiceCall && (callStatus === 'completed' || formData.get('SessionStatus') === 'completed')) {
+                console.log(`[twilio-webhook] Call completed for ${to}. Checking for follow-up SMS...`);
+                try {
+                    const db = getFirestore(agentService.adminApp());
+                    let usersSnap = await db.collection('users').where('agentPhoneNumbersList', 'array-contains', to).limit(1).get();
+                    if (usersSnap.empty) {
+                        usersSnap = await db.collection('users').where('agentPhoneNumber', '==', to).limit(1).get();
+                    }
+
+                    let config: any = null;
+                    if (!usersSnap.empty) {
+                        const userData = usersSnap.docs[0].data();
+                        config = userData.agentPhoneConfigs?.[to] || userData.agentPhoneConfig;
+                    } else {
+                        const unclaimedSnap = await db.collection('unclaimedAgents').doc(to).get();
+                        if (unclaimedSnap.exists) {
+                            config = unclaimedSnap.data()?.agentPhoneConfig;
+                        }
+                    }
+
+                    if (config?.mode === 'leads' && config?.followUpSms) {
+                        console.log(`[twilio-webhook] Sending follow-up SMS to ${from}: "${config.followUpSms}"`);
+                        await phoneAgentService.sendTwilioSms(from, to, config.followUpSms);
+                    }
+                } catch (e) {
+                    console.error('[twilio-webhook] Follow-up SMS error:', e);
+                }
+                return new Response('OK', { status: 200 });
+            }
+
             if (isVoiceCall) {
                 console.log(`[twilio-webhook] Voice call detected. CallSid=${callSid}, CallStatus=${callStatus}, To=${to}, From=${from}`);
                 const voiceServerUrl = (process.env.VOICE_SERVER_URL || '').trim();
