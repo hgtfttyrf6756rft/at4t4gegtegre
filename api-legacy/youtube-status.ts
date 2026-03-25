@@ -83,14 +83,20 @@ export default {
             });
 
             if (!channelRes.ok) {
-                throw new Error('Failed to fetch YouTube channel info');
+                const errText = await channelRes.text().catch(() => 'Unknown error');
+                console.error('[youtube-status] Failed to fetch channel info:', {
+                    status: channelRes.status,
+                    statusText: channelRes.statusText,
+                    body: errText
+                });
+                // Return connected: true but channel: null if we have a token but can't fetch profile
+                return json({ connected: true, channel: null }, 200);
             }
 
             const channelData = await channelRes.json();
             const channel = channelData.items?.[0];
 
             if (!channel) {
-                // Connected but no channel found?
                 return json({ connected: true, channel: null }, 200);
             }
 
@@ -110,6 +116,10 @@ export default {
             if (e.message === 'YouTube not connected') {
                 return json({ connected: false }, 200);
             }
+            console.error('[youtube-status] Unexpected error:', e);
+            // Even on general error (like refresh failure), if it's not "not connected", 
+            // we might want to return connected: true if we have a token? 
+            // But if getAccessToken throws, we don't know if they are connected.
             return error(e.message || 'Failed to get YouTube status', 500);
         }
     },
