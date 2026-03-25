@@ -92,6 +92,12 @@ export const storageService = {
           stripeConnect: (user as any).stripeConnect,
           agentPhoneNumber: (user as any).agentPhoneNumber,
           agentPhoneConfig: (user as any).agentPhoneConfig,
+          agentPhoneNumbersList: (user as any).agentPhoneNumbersList,
+          agentPhoneConfigs: (user as any).agentPhoneConfigs,
+          credits: (user as any).credits,
+          subscribed: (user as any).subscribed,
+          unlimited: (user as any).unlimited,
+          subscriptionTier: (user as any).subscriptionTier,
         };
       }
     } catch (e) {
