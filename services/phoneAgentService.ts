@@ -1250,6 +1250,49 @@ export async function buyTwilioNumber(phoneNumber: string, appUrl: string, voice
     return data.phone_number;
 }
 
+export async function releaseTwilioNumber(phoneNumber: string): Promise<boolean> {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (!accountSid || !authToken) throw new Error("Missing Twilio credentials in environment");
+
+    // 1. Look up the sid for the given phone number
+    const listUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(phoneNumber)}`;
+    const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+
+    const listRes = await fetch(listUrl, {
+        method: 'GET',
+        headers: { 'Authorization': `Basic ${auth}` }
+    });
+
+    if (!listRes.ok) {
+        console.error(`[releaseTwilioNumber] API Error looking up number:`, await listRes.text());
+        return false;
+    }
+
+    const data = await listRes.json();
+    const twilioNumberRec = data.incoming_phone_numbers?.find((n: any) => n.phone_number === phoneNumber);
+
+    if (!twilioNumberRec) {
+        console.warn(`[releaseTwilioNumber] Number ${phoneNumber} not found in this Twilio account.`);
+        return false;
+    }
+
+    // 2. Delete the number
+    const deleteUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/IncomingPhoneNumbers/${twilioNumberRec.sid}.json`;
+    const delRes = await fetch(deleteUrl, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Basic ${auth}` }
+    });
+
+    if (!delRes.ok) {
+        console.error(`[releaseTwilioNumber] Error deleting number:`, await delRes.text());
+        return false;
+    }
+
+    console.log(`[releaseTwilioNumber] Successfully released ${phoneNumber} (SID: ${twilioNumberRec.sid})`);
+    return true;
+}
+
 export async function getOrCreateVerifyService(friendlyName = 'FreshFront Verify'): Promise<string> {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
