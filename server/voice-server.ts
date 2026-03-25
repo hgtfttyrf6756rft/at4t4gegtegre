@@ -315,9 +315,13 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Health check endpoint — allows Render/UptimeRobot to keep the server awake
-    if (req.method === 'GET' && (pathname === '/health' || pathname === '/')) {
+    if ((req.method === 'GET' || req.method === 'HEAD') && (pathname === '/health' || pathname === '/')) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), wsUrl: WS_URL_FOR_HEALTH }));
+        if (req.method === 'GET') {
+            res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), wsUrl: WS_URL_FOR_HEALTH }));
+        } else {
+            res.end(); // HEAD requests should not have a body
+        }
         return;
     }
 
@@ -952,6 +956,12 @@ CRITICAL INSTRUCTIONS:
                     systemPrompt
                 };
 
+                // Trigger Gemini to start the conversation automatically
+                wsSetup.emit('message', JSON.stringify({
+                    type: 'prompt',
+                    textPrompt: "Hi, I just connected. Please introduce yourself and start the setup process according to your instructions."
+                }));
+
             } else if (data.type === 'prompt') {
                 if (!callSid || !sessions[callSid]) return;
 
@@ -1101,22 +1111,6 @@ CRITICAL INSTRUCTIONS:
                                         }]
                                     });
 
-                                    const followup = await ai.models.generateContent({
-                                        model: 'gemini-2.0-flash',
-                                        contents: session.contents,
-                                        config: {
-                                            systemInstruction: session.systemPrompt,
-                                            tools: [provisionAgentTool]
-                                        }
-                                    });
-
-                                    if (followup.candidates?.[0]?.content) {
-                                        session.contents.push(followup.candidates[0].content);
-                                        const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
-                                        if (textPart?.text) {
-                                            responseText += " " + textPart.text;
-                                        }
-                                    }
                                 } catch (provErr: any) {
                                     console.error("[WS-Setup] Error provisioning agent:", provErr);
                                     session.contents.push({
@@ -1128,6 +1122,24 @@ CRITICAL INSTRUCTIONS:
                                             }
                                         }]
                                     });
+                                }
+
+                                // Generate a followup statement to inform the caller of success or failure
+                                const followup = await ai.models.generateContent({
+                                    model: 'gemini-2.0-flash',
+                                    contents: session.contents,
+                                    config: {
+                                        systemInstruction: session.systemPrompt,
+                                        tools: [provisionAgentTool]
+                                    }
+                                });
+
+                                if (followup.candidates?.[0]?.content) {
+                                    session.contents.push(followup.candidates[0].content);
+                                    const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
+                                    if (textPart?.text) {
+                                        responseText += " " + textPart.text;
+                                    }
                                 }
                             }
                         }
