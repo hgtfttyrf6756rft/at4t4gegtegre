@@ -252,6 +252,41 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
         }
     };
 
+    const handleClaimAgents = async () => {
+        setVerifyStatus('verifying');
+        try {
+            const token = await auth.currentUser?.getIdToken();
+            const res = await fetch('/api/agent?op=claim-agents', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (data.claimedCount > 0) {
+                    alert(`Claimed ${data.claimedCount} phone agent(s)!`);
+                    const p = await storageService.getUserProfile();
+                    if (p) {
+                        setProfile(p);
+                        if (!activePhoneTab && p.agentPhoneNumbersList?.length) {
+                             setActivePhoneTab(p.agentPhoneNumbersList[0]);
+                        }
+                    }
+                } else {
+                    alert('No unclaimed agents found for this number.');
+                }
+            } else {
+                alert(data.error || 'Failed to claim agents');
+            }
+        } catch (e) {
+            alert('Failed to claim agents');
+        } finally {
+            setVerifyStatus('idle');
+        }
+    };
+
     const handleSave = async () => {
         try {
             setSaving(true);
@@ -611,6 +646,60 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                 </button>
                             </div>
 
+                        </div>
+
+                        {/* Plan & Billing Card */}
+                        <div className={`rounded-3xl p-6 sm:p-8 relative overflow-hidden ${ui.card}`}>
+                            <div className="flex items-center justify-between mb-6">
+                                <div>
+                                    <h3 className={`text-lg font-semibold ${ui.heading}`}>Plan & Billing</h3>
+                                    <p className={`text-sm ${ui.subtext} mt-1`}>Manage your subscription and credits.</p>
+                                </div>
+                                <div className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest ${isPro ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-gray-500/10 text-gray-500 border border-gray-500/20'}`}>
+                                    {subscription.subscriptionTier || 'Free'} Plan
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-[#2c2c2e]/40 border-[#3a3a3c]' : 'bg-gray-50 border-gray-100'}`}>
+                                    <div className={`text-xs font-semibold uppercase tracking-wider mb-1 ${ui.label}`}>Credit Balance</div>
+                                    <div className="flex items-baseline gap-2">
+                                        <div className={`text-2xl font-bold ${ui.heading}`}>{profile.credits ?? 0}</div>
+                                        <div className={`text-xs ${ui.subtext}`}>Credits remaining</div>
+                                    </div>
+                                    <div className="mt-4">
+                                        <button 
+                                            onClick={() => openUpgradeModal('button', 'pro')}
+                                            className={`text-xs font-semibold underline ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}
+                                        >
+                                            Get more credits →
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className={`p-5 rounded-2xl border ${isDarkMode ? 'bg-[#2c2c2e]/40 border-[#3a3a3c]' : 'bg-gray-50 border-gray-100'}`}>
+                                    <div className={`text-xs font-semibold uppercase tracking-wider mb-1 ${ui.label}`}>Subscription Status</div>
+                                    <div className="flex items-center gap-2">
+                                        <div className={`text-lg font-semibold ${ui.heading}`}>
+                                            {subscription.subscribed ? 'Active' : 'No Active Subscription'}
+                                        </div>
+                                        {subscription.subscribed && (
+                                            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                                        )}
+                                    </div>
+                                    <p className={`text-xs mt-1 ${ui.subtext}`}>
+                                        {subscription.unlimited ? 'Unlimited access enabled.' : 'Standard research limits apply.'}
+                                    </p>
+                                    <div className="mt-4">
+                                        <button 
+                                            onClick={() => openUpgradeModal('button', 'pro')}
+                                            className={`px-4 py-1.5 rounded-lg text-xs font-bold ${ui.buttonPrimary}`}
+                                        >
+                                            {subscription.subscribed ? 'Manage Plan' : 'Upgrade Now'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         {/* Phone Agent Settings */}
@@ -1147,17 +1236,28 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                     <div>
                                         <div className={`text-sm font-medium mb-2 ${ui.label}`}>Personal Phone Number</div>
                                         {profile.personalPhoneNumber ? (
-                                            <div className="flex items-center gap-3 max-w-xs">
-                                                <div className={`flex-1 px-4 py-2 text-sm rounded-xl border opacity-70 cursor-not-allowed ${ui.input}`}>
-                                                    {profile.personalPhoneNumber}
+                                            <div className="flex flex-col gap-2">
+                                                <div className="flex items-center gap-3 max-w-xs">
+                                                    <div className={`flex-1 px-4 py-2 text-sm rounded-xl border opacity-70 cursor-not-allowed ${ui.input}`}>
+                                                        {profile.personalPhoneNumber}
+                                                    </div>
+                                                    <span className="text-green-500 text-[10px] font-bold uppercase tracking-wider px-2 py-1 bg-green-500/10 rounded-lg">Verified</span>
+                                                    <button onClick={() => {
+                                                        setProfile(prev => ({...prev, personalPhoneNumber: ''}));
+                                                        setVerifyStatus('idle');
+                                                        setVerifyPhoneInput('');
+                                                        setVerifyCodeInput('');
+                                                    }} className={`text-[10px] hover:underline ${ui.subtext}`}>Change</button>
                                                 </div>
-                                                <span className="text-green-500 text-[10px] font-bold uppercase tracking-wider px-2 py-1 bg-green-500/10 rounded-lg">Verified</span>
-                                                <button onClick={() => {
-                                                    setProfile(prev => ({...prev, personalPhoneNumber: ''}));
-                                                    setVerifyStatus('idle');
-                                                    setVerifyPhoneInput('');
-                                                    setVerifyCodeInput('');
-                                                }} className={`text-[10px] hover:underline ${ui.subtext}`}>Change</button>
+                                                {(!profile.agentPhoneNumbersList || profile.agentPhoneNumbersList.length === 0) && (
+                                                    <button 
+                                                        onClick={handleClaimAgents}
+                                                        className={`text-[10px] font-semibold text-blue-500 hover:underline flex items-center gap-1`}
+                                                    >
+                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                                        Claim agents setting up over phone?
+                                                    </button>
+                                                )}
                                             </div>
                                         ) : verifyStatus === 'pending_code' || verifyStatus === 'verifying' ? (
                                             <div className="flex gap-2 max-w-xs">
