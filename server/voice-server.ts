@@ -125,6 +125,14 @@ const leadCaptureTool = {
                 },
                 required: ["data"]
             }
+        },
+        {
+            name: "transferToHuman",
+            description: "Transfers the call to a real human. Only use this if the caller explicitly asks to speak to a human and you have confirmed you collected their information.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {}
+            }
         }
     ]
 };
@@ -132,24 +140,38 @@ const leadCaptureTool = {
 const provisionAgentTool = {
     functionDeclarations: [
         {
-            name: "provisionAgent",
-            description: "Reserves a new phone number and configures it as either a Lead Capture agent or an Informational Hotline.",
+            name: "searchAreaCodes",
+            description: "Looks up available area codes in a specific geographic state or province (e.g. 'ON' for Ontario, 'NY' for New York). Call this BEFORE provisioning the agent to give the user a choice of area codes.",
             parameters: {
                 type: Type.OBJECT,
                 properties: {
-                    agentType: { type: Type.STRING, description: "'leads' for a lead capture agent, or 'hotline' for an informational hotline" },
-                    label: { type: Type.STRING, description: "A friendly label or name for the hotline (hotline path only, optional)" },
-                    companyName: { type: Type.STRING, description: "Company Name (leads path)" },
-                    description: { type: Type.STRING, description: "Company Description (leads path)" },
-                    website: { type: Type.STRING, description: "Website (leads path, optional)" },
-                    email: { type: Type.STRING, description: "Company Email (leads path, optional)" },
-                    productService: { type: Type.STRING, description: "Product or service provided (leads path)" },
-                    dataToCollect: {
-                        type: Type.ARRAY,
+                    region: { type: Type.STRING, description: "State or province abbreviation (e.g., 'ON', 'NY', 'CA', 'TX')" }
+                },
+                required: ["region"]
+            }
+        },
+        {
+            name: "provisionAgent",
+            description: "Reserves a new phone number and configures it based on the gathered details.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    agentType: { type: Type.STRING, description: "Must be 'leads' or 'hotline'" },
+                    label: { type: Type.STRING, description: "Friendly name for the hotline (hotline path)" },
+                    areaCode: { type: Type.STRING, description: "The 3-digit area code chosen by the user" },
+                    companyName: { type: Type.STRING, description: "Name of the business (leads path)" },
+                    description: { type: Type.STRING, description: "Short business description (leads path)" },
+                    website: { type: Type.STRING, description: "Business website (leads path)" },
+                    email: { type: Type.STRING, description: "Business email (leads path)" },
+                    productService: { type: Type.STRING, description: "Product or service offered (leads path)" },
+                    dataToCollect: { 
+                        type: Type.ARRAY, 
                         items: { type: Type.STRING },
                         description: "List of fields to collect from callers e.g. ['Name', 'Phone Number'] (leads path)"
                     },
-                    leadDestination: { type: Type.STRING, description: "Route for leads: 'email', 'sms', or 'app' (leads path)" }
+                    leadDestination: { type: Type.STRING, description: "Route for leads: 'email', 'sms', or 'app' (leads path)" },
+                    humanHandoffEnabled: { type: Type.BOOLEAN, description: "Whether human handoff is enabled (leads path, optional)" },
+                    humanHandoffNumber: { type: Type.STRING, description: "The phone number to forward calls to (leads path, required if handoff enabled)" }
                 },
                 required: ["agentType"]
             }
@@ -332,6 +354,47 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
+    // POST /twiml-handoff — Handles ConversationRelay handoff
+    if (req.method === 'POST' && pathname === '/twiml-handoff') {
+        let body = '';
+        req.on('data', chunk => { body += chunk.toString(); });
+        req.on('end', async () => {
+            const postData = querystring.parse(body);
+            const to = postData.To as string || '';
+            let handoffNumber = '';
+            
+            try {
+                const userData = await getUserConfig(to);
+                const normalizedTarget = normalizePhoneNumber(to);
+                const activeConfig = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
+                
+                if (activeConfig?.humanHandoffEnabled && activeConfig?.humanHandoffNumber) {
+                    handoffNumber = activeConfig.humanHandoffNumber;
+                }
+            } catch (e) {
+                console.error('[TwiML-Handoff] Error looking up human handoff number:', e);
+            }
+
+            if (handoffNumber) {
+                const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>Transferring you now.</Say>
+    <Dial>${escapeXmlAttr(handoffNumber)}</Dial>
+</Response>`;
+                res.writeHead(200, { 'Content-Type': 'text/xml' });
+                res.end(xmlResponse);
+            } else {
+                const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+    <Say>Sorry, human transfer is not available at this time.</Say>
+</Response>`;
+                res.writeHead(200, { 'Content-Type': 'text/xml' });
+                res.end(xmlResponse);
+            }
+        });
+        return;
+    }
+
     if (req.method === 'POST' && pathname === '/twiml') {
         let body = '';
         req.on('data', chunk => { body += chunk.toString(); });
@@ -395,7 +458,7 @@ const server = http.createServer(async (req, res) => {
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect>
+    <Connect action="/twiml-handoff">
         <ConversationRelay 
             url="${WS_URL}" 
             welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
@@ -451,7 +514,7 @@ const server = http.createServer(async (req, res) => {
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect>
+    <Connect action="/twiml-handoff">
         <ConversationRelay 
             url="${WS_NOTE_URL}" 
             welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
@@ -484,22 +547,28 @@ const server = http.createServer(async (req, res) => {
             const postData = querystring.parse(body);
             const to = postData.To as string || '';
             const from = postData.From as string || '';
+            const callerCity = postData.CallerCity as string || '';
+            const callerState = postData.CallerState as string || '';
+            const callerCountry = postData.CallerCountry as string || '';
             
-            console.log(`[TwiML-Setup] Received redirect for call to ${to} from ${from}`);
+            console.log(`[TwiML-Setup] Received redirect for call to ${to} from ${from} (${callerCity}, ${callerState})`);
 
             const WS_SETUP_URL = DOMAIN ? `wss://${DOMAIN}/ws-setup` : `ws://localhost:${PORT}/ws-setup`;
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect>
+    <Connect action="/twiml-handoff">
         <ConversationRelay 
             url="${WS_SETUP_URL}" 
-            welcomeGreeting="Welcome to Freshfront! Please wait while I connect you to our agent setup assistant."
+             welcomeGreeting="Welcome to Freshfront! Please wait while I connect you to our agent setup assistant."
             ttsProvider="Google"
             voice="en-US-Journey-F"
         >
             <Parameter name="to" value="${escapeXmlAttr(to)}" />
             <Parameter name="from" value="${escapeXmlAttr(from)}" />
+            <Parameter name="callerCity" value="${escapeXmlAttr(callerCity)}" />
+            <Parameter name="callerState" value="${escapeXmlAttr(callerState)}" />
+            <Parameter name="callerCountry" value="${escapeXmlAttr(callerCountry)}" />
         </ConversationRelay>
     </Connect>
 </Response>`;
@@ -747,6 +816,14 @@ wss.on('connection', (wsMain: WebSocket) => {
                                         responseText = textPart.text;
                                     }
                                 }
+                            } else if (call.name === 'transferToHuman') {
+                                console.log(`[WS] Agent requested handoff to human for call ${callSid}`);
+                                wsMain.send(JSON.stringify({
+                                    type: "handoff",
+                                    handoffData: JSON.stringify({ reason: "transferToHuman requested" })
+                                }));
+                                // After handoff is sent, ConversationRelay will end and Twilio will hit the action URL
+                                return;
                             }
                         }
                     }
@@ -920,8 +997,16 @@ wssSetup.on('connection', (wsSetup: WebSocket) => {
                 callSid = data.callSid;
                 const to = data.customParameters?.to || '';
                 callerNumber = data.customParameters?.from || '';
+                const callerCity = data.customParameters?.callerCity || '';
+                const callerState = data.customParameters?.callerState || '';
+                const callerCountry = data.customParameters?.callerCountry || '';
 
-                console.log(`[WS-Setup] Setup for call: ${callSid} (To: ${to}, From: ${callerNumber})`);
+                console.log(`[WS-Setup] Setup for call: ${callSid} (To: ${to}, From: ${callerNumber}, Location: ${callerCity}, ${callerState})`);
+
+                const locationStr = [callerCity, callerState, callerCountry].filter(Boolean).join(', ');
+                const locationContext = locationStr 
+                    ? `The caller is located in or near: ${locationStr}.\nBefore assigning the final number, use the 'searchAreaCodes' tool with region code '${callerState}' to look up available area codes in their state, and politely ASK the user which one they prefer from the available options.` 
+                    : `Before assigning the final number, politely ask the user what state/province they are in, use 'searchAreaCodes' to look up available area codes there, and ASK the user which one they prefer.`;
 
                 const systemPrompt = `You are the Freshfront Agent Setup Assistant. You are talking to a new user on the phone. Start by warmly welcoming them and asking which type of phone agent they want:
 
@@ -939,15 +1024,19 @@ For LEAD CAPTURE (agentType='leads'):
 5. The product or service they provide
 6. What data to collect from callers (e.g. Name, Phone Number, Inquiry)
 7. Where to send leads: email, sms, or app (say 'dashboard' maps to app)
+8. Human Handoff (Ask the user if they want to optionally allow callers to be transferred to a real human during a call. If yes, ask them for the phone number where calls should be forwarded.)
 
 For INFORMATIONAL HOTLINE (agentType='hotline'):
 1. A friendly label or name for their hotline (optional — if they don't have one, use their business or personal name, or just say 'Your Hotline')
-That's it! Tell them their new number will be set up and they can start texting notes to it right away and call it to ask questions anytime.
+
+LOCATION AWARENESS:
+${locationContext}
+If no area codes are available in their state, ask if another nearby state or region works for them.
 
 CRITICAL INSTRUCTIONS:
 - You are on a phone call. Be conversational, concise, and friendly. No markdown.
 - Ask one or two questions at a time — do not dump all questions at once.
-- Once all required details are gathered, call 'provisionAgent' with agentType set correctly.
+- Only call 'provisionAgent' AFTER they have explicitly chosen an area code. Pass their chosen area code as the 'areaCode' argument.
 - If the caller sounds unsure, briefly explain the difference again.
 - Never use asterisks, bullet points, or emojis in your speech.`;
 
@@ -1009,9 +1098,9 @@ CRITICAL INSTRUCTIONS:
                                 }));
 
                                 try {
-                                    const availableNumbers = await phoneAgentService.searchTwilioNumbers();
+                                    const availableNumbers = await phoneAgentService.searchTwilioNumbers(args.areaCode);
                                     if (!availableNumbers || availableNumbers.length === 0) {
-                                        throw new Error("No phone numbers available to purchase at this time.");
+                                        throw new Error(`No phone numbers available to purchase currently${args.areaCode ? ` in area code ${args.areaCode}` : ''}.`);
                                     }
                                     const numberToBuy = availableNumbers[0].phone_number;
                                     
@@ -1073,6 +1162,8 @@ CRITICAL INSTRUCTIONS:
                                             leadCaptureEnabled: true,
                                             leadFields: leadFields,
                                             leadDestination: args.leadDestination || 'app',
+                                            humanHandoffEnabled: !!args.humanHandoffEnabled,
+                                            humanHandoffNumber: args.humanHandoffNumber || ''
                                         };
                                     }
 
@@ -1125,6 +1216,48 @@ CRITICAL INSTRUCTIONS:
                                 }
 
                                 // Generate a followup statement to inform the caller of success or failure
+                                const followup = await ai.models.generateContent({
+                                    model: 'gemini-2.0-flash',
+                                    contents: session.contents,
+                                    config: {
+                                        systemInstruction: session.systemPrompt,
+                                        tools: [provisionAgentTool]
+                                    }
+                                });
+
+                                if (followup.candidates?.[0]?.content) {
+                                    session.contents.push(followup.candidates[0].content);
+                                    const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
+                                    if (textPart?.text) {
+                                        responseText += " " + textPart.text;
+                                    }
+                                }
+                            } else if (call.name === 'searchAreaCodes') {
+                                const args = call.args as any;
+                                console.log(`[WS-Setup] Searching area codes for region: ${args.region}`);
+                                
+                                wsSetup.send(JSON.stringify({
+                                    type: 'text', token: "Let me check what area codes are available in your region...", last: false
+                                }));
+
+                                try {
+                                    const result = await phoneAgentService.searchAvailableAreaCodes(args.region);
+                                    session.contents.push({
+                                        role: 'user',
+                                        parts: [{
+                                            functionResponse: {
+                                                name: 'searchAreaCodes',
+                                                response: result
+                                            }
+                                        }]
+                                    });
+                                } catch (e: any) {
+                                    session.contents.push({
+                                        role: 'user',
+                                        parts: [{ functionResponse: { name: 'searchAreaCodes', response: { error: e.message }}}]
+                                    });
+                                }
+
                                 const followup = await ai.models.generateContent({
                                     model: 'gemini-2.0-flash',
                                     contents: session.contents,
