@@ -1176,6 +1176,42 @@ export async function searchTwilioNumbers(areaCode?: string) {
     return numbers;
 }
 
+export async function searchAvailableAreaCodes(region: string): Promise<{ availableAreaCodes: string[] }> {
+    console.log(`[searchAreaCodes] Searching for available area codes in region: ${region}`);
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (!accountSid || !authToken) throw new Error("Missing Twilio credentials in environment");
+
+    const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+
+    async function fetchRegion(country: string): Promise<string[]> {
+        const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/AvailablePhoneNumbers/${country}/Local.json?InRegion=${encodeURIComponent(region)}&SmsEnabled=true&VoiceEnabled=true&PageSize=50`;
+        const response = await fetch(url, { headers: { 'Authorization': `Basic ${auth}` } });
+        if (!response.ok) return [];
+        const data = await response.json();
+        
+        const codes = new Set<string>();
+        for (const numberObj of (data.available_phone_numbers || [])) {
+            // E.g. +14165551234 -> 416
+            const phone = numberObj.phone_number;
+            if (phone && phone.length >= 5) {
+                codes.add(phone.substring(2, 5));
+            }
+        }
+        return Array.from(codes);
+    }
+
+    let areaCodes = await fetchRegion('US');
+    if (areaCodes.length === 0) {
+        areaCodes = await fetchRegion('CA');
+    }
+
+    // Limit to 5 area codes so the AI doesn't read off an exhaustive list on the phone
+    const limitedCodes = areaCodes.slice(0, 5);
+    console.log(`[searchAreaCodes] Found available area codes in ${region}:`, limitedCodes);
+    return { availableAreaCodes: limitedCodes };
+}
+
 export async function buyTwilioNumber(phoneNumber: string, appUrl: string, voiceUrl?: string) {
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
