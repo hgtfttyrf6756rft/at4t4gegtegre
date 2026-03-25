@@ -56,6 +56,10 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
     const [verifyCodeInput, setVerifyCodeInput] = useState('');
     const [verifyStatus, setVerifyStatus] = useState<'idle' | 'sending' | 'pending_code' | 'verifying'>('idle');
 
+    // Google Calendar State
+    const [calendarConnected, setCalendarConnected] = useState(false);
+    const [calendarConnecting, setCalendarConnecting] = useState(false);
+
     const { subscription, showUpgradeModal, openUpgradeModal, closeUpgradeModal } = useSubscription();
     const isPro = subscription.subscribed || subscription.subscriptionTier === 'pro' || subscription.subscriptionTier === 'unlimited';
 
@@ -121,9 +125,18 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
             }
         };
 
+        const checkCalendarStatus = async () => {
+            try {
+                const res = await authFetch('/api/google?op=google-calendar-status');
+                const data = await res.json();
+                if (data?.connected) setCalendarConnected(true);
+            } catch {}
+        };
+
         loadProfile();
         loadLeads();
         loadNotes();
+        checkCalendarStatus();
     }, []);
 
     // Helper to ensure default lead fields exist
@@ -153,6 +166,25 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
         if (typeof window === 'undefined') return;
         window.history.pushState({}, '', '/ddi');
         window.dispatchEvent(new PopStateEvent('popstate'));
+    };
+
+    const handleCalendarConnect = async () => {
+        setCalendarConnecting(true);
+        try {
+            const res = await authFetch('/api/google?op=google-calendar-auth-url');
+            const data = await res.json();
+            if (data?.url) {
+                window.location.href = data.url;
+            } else {
+                setMessage({ type: 'error', text: 'Could not get Google Calendar auth URL.' });
+                setTimeout(() => setMessage(null), 4000);
+            }
+        } catch (e) {
+            setMessage({ type: 'error', text: 'Failed to connect Google Calendar.' });
+            setTimeout(() => setMessage(null), 4000);
+        } finally {
+            setCalendarConnecting(false);
+        }
     };
 
     const handleSendVerification = async () => {
@@ -853,6 +885,81 @@ export const ProfileSettingsPage: React.FC<ProfileSettingsPageProps> = ({ isDark
                                                                                 <p className={`mt-2 text-[10px] ${ui.subtext}`}>
                                                                                     Callers can be transferred to this number during the call.
                                                                                 </p>
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+
+                                                                     {/* Follow-up SMS */}
+                                                                    <div className="pt-2 border-t border-[#3a3a3c]/30 pb-2">
+                                                                        <label className={`block text-xs font-semibold mb-2 mt-2 ${ui.label}`}>Automated Follow-up SMS</label>
+                                                                        <textarea
+                                                                            rows={2}
+                                                                            value={activeConfig.followUpSms || ''}
+                                                                            onChange={e => updateActivePhoneConfig({ followUpSms: e.target.value })}
+                                                                            placeholder="e.g. Thanks for calling! Here is our booking link: [URL]"
+                                                                            className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all resize-none ${ui.input}`}
+                                                                        />
+                                                                        <p className={`mt-2 text-[10px] ${ui.subtext}`}>
+                                                                            Sent automatically to callers immediately after they hang up.
+                                                                        </p>
+                                                                    </div>
+
+                                                                    {/* Appointment Booking */}
+                                                                    <div className="pt-2 border-t border-[#3a3a3c]/30 pb-2">
+                                                                        <div className="flex items-center justify-between mb-3 mt-2">
+                                                                            <div>
+                                                                                <label className={`text-xs font-semibold ${ui.label}`}>AI Appointment Booking</label>
+                                                                                <p className={`text-[10px] mt-0.5 ${ui.subtext}`}>Agent books slots on your Google Calendar</p>
+                                                                            </div>
+                                                                            <label className="flex items-center gap-3 cursor-pointer">
+                                                                                <div className="relative">
+                                                                                    <input
+                                                                                        type="checkbox"
+                                                                                        className="sr-only peer"
+                                                                                        checked={activeConfig.appointmentBookingEnabled || false}
+                                                                                        onChange={e => updateActivePhoneConfig({ appointmentBookingEnabled: e.target.checked })}
+                                                                                    />
+                                                                                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                                                                                </div>
+                                                                            </label>
+                                                                        </div>
+
+                                                                        {/* Calendar connect button */}
+                                                                        <div className={`rounded-xl p-3 border flex items-center justify-between gap-3 ${isDarkMode ? 'border-[#3a3a3c] bg-[#2c2c2e]/40' : 'border-gray-200 bg-gray-50/80'}`}>
+                                                                            <div className="flex items-center gap-2 min-w-0">
+                                                                                <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none">
+                                                                                    <path d="M19 4H5C3.89543 4 3 4.89543 3 6V20C3 21.1046 3.89543 22 5 22H19C20.1046 22 21 21.1046 21 20V6C21 4.89543 20.1046 4 19 4Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                                                                    <path d="M16 2V6M8 2V6M3 10H21" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                                                                                </svg>
+                                                                                <span className={`text-xs font-medium truncate ${ui.heading}`}>
+                                                                                    {calendarConnected ? 'Google Calendar Connected' : 'Connect Google Calendar'}
+                                                                                </span>
+                                                                                {calendarConnected && (
+                                                                                    <span className="text-green-500 text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-green-500/10 rounded-md flex-shrink-0">✓ Active</span>
+                                                                                )}
+                                                                            </div>
+                                                                            {!calendarConnected && (
+                                                                                <button
+                                                                                    onClick={handleCalendarConnect}
+                                                                                    disabled={calendarConnecting}
+                                                                                    className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 ${ui.buttonPrimary}`}
+                                                                                >
+                                                                                    {calendarConnecting ? '...' : 'Connect'}
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
+
+                                                                        {activeConfig.appointmentBookingEnabled && (
+                                                                            <div className="mt-3">
+                                                                                <label className={`block text-[10px] font-semibold mb-1 ${ui.label}`}>Calendar ID (optional)</label>
+                                                                                <input
+                                                                                    type="text"
+                                                                                    value={activeConfig.calendarId || ''}
+                                                                                    onChange={e => updateActivePhoneConfig({ calendarId: e.target.value })}
+                                                                                    placeholder="primary"
+                                                                                    className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-[#0071e3]/20 transition-all ${ui.input}`}
+                                                                                />
+                                                                                <p className={`mt-1 text-[10px] ${ui.subtext}`}>Leave blank to use your default calendar.</p>
                                                                             </div>
                                                                         )}
                                                                     </div>
