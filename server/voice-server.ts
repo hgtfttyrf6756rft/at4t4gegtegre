@@ -8,6 +8,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import * as phoneAgentService from '../services/phoneAgentService';
 import * as url from 'url';
 import * as path from 'path';
+import * as audioUtils from './audio-utils.js';
 
 // Load environment variables
 dotenv.config();
@@ -703,6 +704,7 @@ const wss = new WebSocketServer({ noServer: true });
 const wssNote = new WebSocketServer({ noServer: true });
 const wssSetup = new WebSocketServer({ noServer: true });
 const wssProjects = new WebSocketServer({ noServer: true });
+const wssMedia = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
     const pathname = url.parse(request.url || '').pathname;
@@ -722,6 +724,10 @@ server.on('upgrade', (request, socket, head) => {
     } else if (pathname === '/ws-projects') {
         wssProjects.handleUpgrade(request, socket, head, (ws) => {
             wssProjects.emit('connection', ws, request);
+        });
+    } else if (pathname === '/ws-media') {
+        wssMedia.handleUpgrade(request, socket, head, (ws) => {
+            wssMedia.emit('connection', ws, request);
         });
     } else {
         socket.destroy();
@@ -810,7 +816,7 @@ wss.on('connection', (wsMain: WebSocket) => {
             } else if (data.type === 'prompt') {
                 if (!callSid || !sessions[callSid]) return;
 
-                const userPrompt = data.voicePrompt || data.textPrompt;
+                const userPrompt = data.voicePrompt || data.textPrompt || '';
                 console.log(`[WS] User (${callSid}): ${userPrompt}`);
 
                 const session = sessions[callSid];
@@ -823,7 +829,7 @@ wss.on('connection', (wsMain: WebSocket) => {
                     const config = userData?.agentPhoneConfigs?.[callerNumber] || userData?.agentPhoneConfigs?.[normalizedTarget] || userData?.agentPhoneConfig;
                     const leadCaptureEnabled = config?.mode === 'leads' || !!config?.leadCaptureEnabled;
 
-                    const response = await ai.models.generateContent({
+                    const result = await ai.models.generateContentStream({
                         model: 'gemini-2.0-flash',
                         contents: session.contents,
                         config: {
@@ -832,186 +838,116 @@ wss.on('connection', (wsMain: WebSocket) => {
                         }
                     });
 
-                    if (response.candidates?.[0]?.content) {
-                        session.contents.push(response.candidates[0].content);
-                    }
-
                     let responseText = '';
-                    const parts = response.candidates?.[0]?.content?.parts || [];
+                    let anyToolCalled = false;
 
-                    for (const part of parts) {
-                        if (part.text) {
-                            responseText += part.text;
+                    for await (const chunk of result) {
+                        const text = chunk.text;
+                        if (text) {
+                            responseText += text;
+                            wsMain.send(JSON.stringify({ type: 'text', token: text, last: false }));
                         }
 
-                        if (part.functionCall) {
-                            const call = part.functionCall;
-                            if (call.name === 'saveCapturedLead') {
-                                console.log(`[WS] Saving Lead for call ${callSid}:`, call.args);
-                                const firestore2 = initFirebase();
-                                if (session.uid && firestore2) {
+                        const calls = chunk.functionCalls;
+                        if (calls && calls.length > 0) {
+                            anyToolCalled = true;
+                            for (const call of calls) {
+                                if (call.name === 'saveCapturedLead') {
+                                    console.log(`[WS] Saving Lead for call ${callSid}:`, call.args);
+                                    const firestore2 = initFirebase();
+                                    if (session.uid && firestore2) {
+                                        try {
+                                            await firestore2.collection('users').doc(session.uid).collection('phoneAgentLeads').add({
+                                                callerNumber,
+                                                data: (call.args as any).data,
+                                                agentInstructions: session.agentInstructions,
+                                                timestamp: Date.now()
+                                            });
+                                            console.log(`[WS] Lead saved to Firestore for user ${session.uid}`);
+                                        } catch (fsErr) {
+                                            console.error("[WS] Error saving lead to Firestore:", fsErr);
+                                        }
+                                    }
+                                    session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'saveCapturedLead', response: { success: true } } }] });
+                                } else if (call.name === 'transferToHuman') {
+                                    console.log(`[WS] Agent requested handoff count for call ${callSid}`);
+                                    wsMain.send(JSON.stringify({ type: "handoff", handoffData: JSON.stringify({ reason: "transferToHuman requested" }) }));
+                                    return; // Turn ends here
+                                } else if (call.name === 'bookAppointment') {
+                                    const apptArgs = call.args as any;
+                                    let bookingResult: any = { success: false, error: 'Appointment booking failed.' };
                                     try {
-                                        await firestore2.collection('users').doc(session.uid).collection('phoneAgentLeads').add({
-                                            callerNumber,
-                                            data: (call.args as any).data,
-                                            agentInstructions: session.agentInstructions,
-                                            timestamp: Date.now()
-                                        });
-                                        console.log(`[WS] Lead saved to Firestore for user ${session.uid}`);
-                                    } catch (fsErr) {
-                                        console.error("[WS] Error saving lead to Firestore:", fsErr);
-                                    }
-                                }
+                                        const agentUserData = await getUserConfig(data.customParameters?.to || callerNumber);
+                                        const normalizedTo = normalizePhoneNumber(data.customParameters?.to || callerNumber);
+                                        const agentCfg = agentUserData?.agentPhoneConfigs?.[data.customParameters?.to] || agentUserData?.agentPhoneConfigs?.[normalizedTo] || agentUserData?.agentPhoneConfig;
 
-                                session.contents.push({
-                                    role: 'user',
-                                    parts: [{
-                                        functionResponse: {
-                                            name: 'saveCapturedLead',
-                                            response: { success: true }
-                                        }
-                                    }]
-                                });
-
-                                const followup = await ai.models.generateContent({
-                                    model: 'gemini-2.0-flash',
-                                    contents: session.contents,
-                                    config: {
-                                        systemInstruction: session.systemPrompt,
-                                        tools: [leadCaptureTool]
-                                    }
-                                });
-
-                                if (followup.candidates?.[0]?.content) {
-                                    session.contents.push(followup.candidates[0].content);
-                                    const textPart = followup.candidates[0].content.parts.find((p: any) => p.text);
-                                    if (textPart?.text) {
-                                        responseText = textPart.text;
-                                    }
-                                }
-                            } else if (call.name === 'transferToHuman') {
-                                console.log(`[WS] Agent requested handoff to human for call ${callSid}`);
-                                wsMain.send(JSON.stringify({
-                                    type: "handoff",
-                                    handoffData: JSON.stringify({ reason: "transferToHuman requested" })
-                                }));
-                                // After handoff is sent, ConversationRelay will end and Twilio will hit the action URL
-                                return;
-                            } else if (call.name === 'bookAppointment') {
-                                console.log(`[WS] bookAppointment tool called for call ${callSid}:`, call.args);
-                                const apptArgs = call.args as any;
-                                let bookingResult: any = { success: false, error: 'Appointment booking not configured.' };
-
-                                try {
-                                    // 1. Get the agent config to check if booking is enabled
-                                    const agentUserData = await getUserConfig(data.customParameters?.to || callerNumber);
-                                    const normalizedTo = normalizePhoneNumber(data.customParameters?.to || callerNumber);
-                                    const agentCfg = agentUserData?.agentPhoneConfigs?.[data.customParameters?.to] || agentUserData?.agentPhoneConfigs?.[normalizedTo] || agentUserData?.agentPhoneConfig;
-
-                                    if (agentCfg?.appointmentBookingEnabled && agentUserData?.uid) {
-                                        // 2. Get the calendar OAuth token from Firestore
-                                        const firestore3 = initFirebase();
-                                        if (!firestore3) throw new Error('Firestore unavailable');
-
-                                        const calTokenSnap = await firestore3.doc(`users/${agentUserData.uid}/integrations/googleCalendar`).get();
-                                        const refreshToken = calTokenSnap?.data()?.refreshToken;
-                                        if (!refreshToken) throw new Error('Google Calendar not connected');
-
-                                        // 3. Refresh access token
-                                        const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID || '';
-                                        const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET || '';
-                                        if (!clientId || !clientSecret) throw new Error('Missing Google OAuth credentials');
-
-                                        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-                                            method: 'POST',
-                                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                                            body: new URLSearchParams({
-                                                client_id: clientId,
-                                                client_secret: clientSecret,
-                                                refresh_token: refreshToken,
-                                                grant_type: 'refresh_token',
-                                            }).toString(),
-                                        });
-                                        if (!tokenRes.ok) throw new Error(`Token refresh failed: ${tokenRes.status}`);
-                                        const tokenJson: any = await tokenRes.json();
-                                        const accessToken = tokenJson.access_token;
-                                        if (!accessToken) throw new Error('No access_token in response');
-
-                                        // 4. Build and create the calendar event
-                                        const startMs = new Date(apptArgs.dateTimeIso).getTime();
-                                        const durationMs = (apptArgs.durationMinutes || 60) * 60 * 1000;
-                                        const endMs = startMs + durationMs;
-                                        const calendarId = agentCfg.calendarId || 'primary';
-
-                                        const eventBody = {
-                                            summary: `📞 Appointment – ${callerNumber}`,
-                                            description: `Booked via phone agent.\n\nLead details:\n${apptArgs.notes}`,
-                                            start: { dateTime: new Date(startMs).toISOString() },
-                                            end: { dateTime: new Date(endMs).toISOString() },
-                                        };
-
-                                        const calRes = await fetch(
-                                            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
-                                            {
-                                                method: 'POST',
-                                                headers: {
-                                                    Authorization: `Bearer ${accessToken}`,
-                                                    'Content-Type': 'application/json',
-                                                },
-                                                body: JSON.stringify(eventBody),
+                                        if (agentCfg?.appointmentBookingEnabled && agentUserData?.uid) {
+                                            const firestore3 = initFirebase();
+                                            if (firestore3) {
+                                                const calTokenSnap = await firestore3.doc(`users/${agentUserData.uid}/integrations/googleCalendar`).get();
+                                                const refreshToken = calTokenSnap?.data()?.refreshToken;
+                                                if (refreshToken) {
+                                                    const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID || '';
+                                                    const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET || '';
+                                                    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+                                                        method: 'POST',
+                                                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                                        body: new URLSearchParams({ client_id: clientId, client_secret: clientSecret, refresh_token: refreshToken, grant_type: 'refresh_token' }).toString(),
+                                                    });
+                                                    if (tokenRes.ok) {
+                                                        const tokenJson: any = await tokenRes.json();
+                                                        const accessToken = tokenJson.access_token;
+                                                        const startMs = new Date(apptArgs.dateTimeIso).getTime();
+                                                        const endMs = startMs + (apptArgs.durationMinutes || 60) * 60 * 1000;
+                                                        const calendarId = agentCfg.calendarId || 'primary';
+                                                        const eventBody = {
+                                                            summary: `📞 Appointment – ${callerNumber}`,
+                                                            description: `Booked via phone agent.\n\nLead details:\n${apptArgs.notes}`,
+                                                            start: { dateTime: new Date(startMs).toISOString() },
+                                                            end: { dateTime: new Date(endMs).toISOString() },
+                                                        };
+                                                        const calRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`, {
+                                                            method: 'POST',
+                                                            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+                                                            body: JSON.stringify(eventBody),
+                                                        });
+                                                        if (calRes.ok) {
+                                                            const calData: any = await calRes.json();
+                                                            bookingResult = { success: true, eventId: calData.id, htmlLink: calData.htmlLink };
+                                                        }
+                                                    }
+                                                }
                                             }
-                                        );
-
-                                        if (!calRes.ok) {
-                                            const errText = await calRes.text();
-                                            throw new Error(`Calendar API error: ${calRes.status} ${errText}`);
                                         }
-
-                                        const calData: any = await calRes.json();
-                                        bookingResult = { success: true, eventId: calData.id, htmlLink: calData.htmlLink };
-                                        console.log(`[WS] Appointment booked: ${calData.htmlLink}`);
-                                    } else {
-                                        bookingResult = { success: false, error: 'Appointment booking is not enabled for this agent.' };
+                                    } catch (bookErr: any) {
+                                        console.error('[WS] bookAppointment error:', bookErr);
                                     }
-                                } catch (bookErr: any) {
-                                    console.error('[WS] bookAppointment error:', bookErr);
-                                    bookingResult = { success: false, error: bookErr.message || 'Failed to book appointment.' };
-                                }
-
-                                session.contents.push({
-                                    role: 'user',
-                                    parts: [{ functionResponse: { name: 'bookAppointment', response: bookingResult } }]
-                                });
-
-                                // Re-call Gemini so it can verbally confirm or apologize
-                                const apptFollowup = await ai.models.generateContent({
-                                    model: 'gemini-2.0-flash',
-                                    contents: session.contents,
-                                    config: { systemInstruction: session.systemPrompt, tools: [leadCaptureTool] }
-                                });
-                                if (apptFollowup.candidates?.[0]?.content) {
-                                    session.contents.push(apptFollowup.candidates[0].content);
-                                    const textPart = apptFollowup.candidates[0].content.parts.find((p: any) => p.text);
-                                    if (textPart?.text) responseText = textPart.text;
+                                    session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'bookAppointment', response: bookingResult } }] });
                                 }
                             }
                         }
                     }
 
-                    wsMain.send(JSON.stringify({
-                        type: 'text',
-                        token: responseText,
-                        last: true
-                    }));
+                    if (anyToolCalled) {
+                        const followup = await ai.models.generateContentStream({
+                            model: 'gemini-2.0-flash',
+                            contents: session.contents,
+                            config: { systemInstruction: session.systemPrompt, tools: [leadCaptureTool] }
+                        });
+                        for await (const chunk of followup) {
+                            const text = chunk.text;
+                            if (text) {
+                                responseText += text;
+                                wsMain.send(JSON.stringify({ type: 'text', token: text, last: false }));
+                            }
+                        }
+                    }
 
-                    console.log(`[WS] Gemini (${callSid}): ${responseText}`);
+                    wsMain.send(JSON.stringify({ type: 'text', token: '', last: true }));
+                    console.log(`[WS] Gemini (${callSid}): ${responseText.substring(0, 80)}`);
                 } catch (apiError) {
                     console.error(`[WS] Gemini API Error for ${callSid}:`, apiError);
-                    wsMain.send(JSON.stringify({
-                        type: 'text',
-                        token: "I'm sorry, I encountered an error processing your request.",
-                        last: true
-                    }));
+                    wsMain.send(JSON.stringify({ type: 'text', token: "Sorry, I had an error processing that.", last: true }));
                 }
             } else if (data.type === 'interrupt') {
                 console.log(`[WS] Interruption for call ${callSid}`);
@@ -1123,19 +1059,27 @@ wssNote.on('connection', (wsNote: WebSocket) => {
                 try {
                     // Use generateContent (single-turn) since Twilio ConversationRelay
                     // manages the audio loop — we just respond with text each turn
-                    const response = await ai.models.generateContent({
+                    const result = await ai.models.generateContentStream({
                         model: 'gemini-2.0-flash',
                         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
                         config: { systemInstruction: systemPrompt }
                     });
 
-                    const responseText = response.candidates?.[0]?.content?.parts
-                        ?.filter((p: any) => p.text)
-                        .map((p: any) => p.text)
-                        .join('') || "I couldn't find an answer in your notes.";
-
-                    wsNote.send(JSON.stringify({ type: 'text', token: responseText, last: true }));
-                    console.log(`[WS-Note] Gemini (${callSid}): ${responseText.substring(0, 80)}...`);
+                    let fullResponse = '';
+                    for await (const chunk of result) {
+                        const text = chunk.text;
+                        if (text) {
+                            fullResponse += text;
+                            wsNote.send(JSON.stringify({ type: 'text', token: text, last: false }));
+                        }
+                    }
+                    
+                    if (!fullResponse) {
+                        wsNote.send(JSON.stringify({ type: 'text', token: "I couldn't find an answer in your notes.", last: true }));
+                    } else {
+                        wsNote.send(JSON.stringify({ type: 'text', token: '', last: true }));
+                    }
+                    console.log(`[WS-Note] Gemini (${callSid}): ${fullResponse.substring(0, 80)}...`);
                 } catch (apiError) {
                     console.error(`[WS-Note] Gemini API Error for ${callSid}:`, apiError);
                     wsNote.send(JSON.stringify({ type: 'text', token: "I'm sorry, I had trouble looking up your notes.", last: true }));
@@ -1253,7 +1197,7 @@ CRITICAL INSTRUCTIONS:
                 session.contents.push({ role: 'user', parts: [{ text: userPrompt }] });
 
                 try {
-                    let response = await ai.models.generateContent({
+                    const result = await ai.models.generateContentStream({
                         model: 'gemini-2.0-flash',
                         contents: session.contents,
                         config: {
@@ -1262,288 +1206,114 @@ CRITICAL INSTRUCTIONS:
                         }
                     });
 
-                    if (response.candidates?.[0]?.content) {
-                        session.contents.push(response.candidates[0].content);
-                    }
-
                     let responseText = '';
                     let anyToolCalled = false;
-                    const parts = response.candidates?.[0]?.content?.parts || [];
 
-                    for (const part of parts) {
-                        if (part.text) {
-                            responseText += part.text;
+                    for await (const chunk of result) {
+                        const text = chunk.text;
+                        if (text) {
+                            responseText += text;
+                            wsSetup.send(JSON.stringify({ type: 'text', token: text, last: false }));
                         }
 
-                        if (part.functionCall) {
+                        const calls = chunk.functionCalls;
+                        if (calls && calls.length > 0) {
                             anyToolCalled = true;
-                            const call = part.functionCall;
-                            
-                            if (call.name === 'searchAreaCodes') {
+                            for (const call of calls) {
                                 const args = call.args as any;
-                                console.log(`[WS-Setup] Searching area codes for: ${args.region}`);
-                                
-                                wsSetup.send(JSON.stringify({
-                                    type: 'text', token: "Let me check what area codes are available in your region...", last: false
-                                }));
+                                if (call.name === 'searchAreaCodes') {
+                                    console.log(`[WS-Setup] Searching area codes for: ${args.region}`);
+                                    wsSetup.send(JSON.stringify({ type: 'text', token: "Checking available area codes...", last: false }));
 
-                                try {
-                                    const result = await phoneAgentService.searchAvailableAreaCodes(args.region);
-                                    session.contents.push({
-                                        role: 'user',
-                                        parts: [{
-                                            functionResponse: {
-                                                name: 'searchAreaCodes',
-                                                response: result
-                                            }
-                                        }]
-                                    });
-                                } catch (e: any) {
-                                    console.error('[WS-Setup] searchAreaCodes tool error:', e);
-                                    session.contents.push({
-                                        role: 'user',
-                                        parts: [{ functionResponse: { name: 'searchAreaCodes', response: { error: e.message }}}]
-                                    });
-                                }
-                            } else if (call.name === 'deleteAgent') {
-                                const args = call.args as any;
-                                const targetNumber = normalizePhoneNumber(args.phoneNumber);
-                                console.log(`[WS-Setup] Requested delete for: ${targetNumber} (Caller: ${callerNumber}, UID: ${session.uid})`);
-
-                                wsSetup.send(JSON.stringify({
-                                    type: 'text', token: "I'm releasing that phone number for you now. Just a moment...", last: false
-                                }));
-
-                                try {
-                                    let success = false;
-                                    const firestore = initFirebase();
-                                    
-                                    // Verify ownership if possible
-                                    const userData = session.uid ? await getUserConfig(callerNumber) : null;
-                                    const isOwner = userData?.agentPhoneNumbersList?.includes(targetNumber);
-
-                                    if (isOwner || !session.uid) {
-                                        const released = await phoneAgentService.releaseTwilioNumber(targetNumber);
-                                        if (released && userData) {
-                                            // Handle Firestore cleanup for existing user
-                                            const newList = userData.agentPhoneNumbersList.filter((n: string) => n !== targetNumber);
-                                            const newConfigs = { ...userData.agentPhoneConfigs };
-                                            delete newConfigs[targetNumber];
-                                            
-                                            await firestore!.collection('users').doc(userData.uid).update({
-                                                agentPhoneNumbersList: newList,
-                                                agentPhoneConfigs: newConfigs
-                                            });
-                                            success = true;
-                                        } else if (released) {
-                                            // Handle cleanup for unclaimed agents
-                                            await firestore!.collection('unclaimedAgents').doc(targetNumber).delete();
-                                            success = true;
-                                        }
-                                    }
-
-                                    session.contents.push({
-                                        role: 'user',
-                                        parts: [{
-                                            functionResponse: {
-                                                name: 'deleteAgent',
-                                                response: { success }
-                                            }
-                                        }]
-                                    });
-                                } catch (err: any) {
-                                    console.error('[WS-Setup] deleteAgent tool error:', err);
-                                    session.contents.push({
-                                        role: 'user',
-                                        parts: [{
-                                            functionResponse: {
-                                                name: 'deleteAgent',
-                                                response: { success: false, error: err.message || "Failed to delete agent." }
-                                            }
-                                        }]
-                                    });
-                                }
-                            } else if (call.name === 'getAgentAnalytics') {
-                                anyToolCalled = true;
-                                const type = call.args.type;
-                                const timeRange = call.args.timeRange || 'week';
-                                console.log(`[WS-Setup] Fetching analytics: ${type} for ${timeRange} (${callerNumber})`);
-
-                                const firestore = initFirebase();
-                                let resultContext = "";
-
-                                        if (firestore && session.uid) {
                                     try {
-                                        const now = new Date();
-                                        let startTime = new Date();
-                                        if (timeRange === 'today') startTime.setHours(0, 0, 0, 0);
-                                        else if (timeRange === 'week') startTime.setDate(now.getDate() - 7);
-                                        else if (timeRange === 'month') startTime.setDate(now.getDate() - 30);
-
-                                        const startTs = startTime.getTime();
-
-                                        if (type === 'leads') {
-                                            const leadsRef = firestore.collection('users').doc(session.uid).collection('phoneAgentLeads');
-                                            const snapshot = await leadsRef.where('timestamp', '>=', startTs).get();
-                                            const count = snapshot.size;
-                                            
-                                            const recentLeads: string[] = [];
-                                            snapshot.docs.slice(0, 3).forEach(doc => {
-                                                const d = doc.data();
-                                                recentLeads.push(`${d.name || 'Unknown'} (${d.phoneNumber || 'No phone'}) - ${d.inquiry || 'No inquiry'}`);
-                                            });
-
-                                            resultContext = `You have received ${count} leads in the last ${timeRange}. 
-                                                            ${recentLeads.length > 0 ? "Recent leads include: " + recentLeads.join('; ') : ""}`;
-                                        } else if (type === 'conversations') {
-                                            const historyRef = firestore.collection('users').doc(session.uid).collection('phoneAgentHistory');
-                                            const snapshot = await historyRef.where('timestamp', '>=', startTs).limit(20).get();
-                                            
-                                            const transcripts = snapshot.docs.map(doc => doc.data().text || "").filter(Boolean);
-                                            resultContext = `Analyzed ${snapshot.size} recent message exchanges. Themes detected: ${transcripts.length > 0 ? "Callers are mostly saying: " + transcripts.join(' | ').substring(0, 300) + "..." : "No clear themes found yet."}`;
-                                        }
-                                    } catch (err) {
-                                        console.error("[WS-Setup] Analytics error:", err);
-                                        resultContext = "Error fetching analytics data.";
+                                        const res = await phoneAgentService.searchAvailableAreaCodes(args.region);
+                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'searchAreaCodes', response: res } }] });
+                                    } catch (e: any) {
+                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'searchAreaCodes', response: { error: e.message } } }] });
                                     }
-                                } else {
-                                    resultContext = "User account not linked or Firestore unavailable. Analytics unavailable.";
-                                }
-
-                                session.contents.push({
-                                    role: 'user',
-                                    parts: [{
-                                        functionResponse: {
-                                            name: call.name,
-                                            response: { content: resultContext }
-                                        }
-                                    }]
-                                });
-                            } else if (call.name === 'provisionAgent') {
-                                const args = call.args as any;
-                                console.log(`[WS-Setup] Provisioning Agent for ${callerNumber}: type=${args.agentType}`, args);
-
-                                wsSetup.send(JSON.stringify({
-                                    type: 'text',
-                                    token: args.agentType === 'hotline'
-                                        ? "Perfect! I'm reserving your informational hotline number now. Just a moment!"
-                                        : "I'm setting up your lead capture agent now. This will take just a moment while I reserve your new phone number.",
-                                    last: false
-                                }));
-
-                                try {
-                                    const availableNumbers = await phoneAgentService.searchTwilioNumbers(args.areaCode);
-                                    if (!availableNumbers || availableNumbers.length === 0) {
-                                        throw new Error(`No phone numbers available to purchase currently${args.areaCode ? ` in area code ${args.areaCode}` : ''}.`);
+                                } else if (call.name === 'provisionAgent') {
+                                    wsSetup.send(JSON.stringify({ type: 'text', token: "Setting up your agent now...", last: false }));
+                                    try {
+                                        const res = await phoneAgentService.provisionNewAgent({ ...args, callerNumber });
+                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'provisionAgent', response: res } }] });
+                                    } catch (e: any) {
+                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'provisionAgent', response: { error: e.message } } }] });
                                     }
-                                    const numberToBuy = availableNumbers[0].phone_number;
-                                    
-                                    const newTwilioNumber = await phoneAgentService.buyTwilioNumber(
-                                        numberToBuy,
-                                        APP_URL,
-                                        `${APP_URL}/api/agent`
-                                    );
-                                    console.log(`[WS-Setup] New Number Provisioned: ${newTwilioNumber}`);
+                                } else if (call.name === 'deleteAgent') {
+                                    const targetNumber = normalizePhoneNumber(args.phoneNumber);
+                                    wsSetup.send(JSON.stringify({ type: 'text', token: "Releasing that number...", last: false }));
 
-                                    const firestore = initFirebase();
-                                    let userRef: FirebaseFirestore.DocumentReference | null = null;
-                                    let uid = '';
-                                    let userData: any = {};
-
-                                    if (firestore) {
-                                        const normalizedCaller = normalizePhoneNumber(callerNumber);
-                                        const noPlusCaller = normalizedCaller.startsWith('+') ? normalizedCaller.substring(1) : normalizedCaller;
-                                        const searchValues = [callerNumber, normalizedCaller, noPlusCaller, `+${noPlusCaller}`];
-                                        const uniqueValues = [...new Set(searchValues)].slice(0, 5);
-
-                                        let userSnap = await firestore.collection('users')
-                                            .where('personalPhoneNumber', 'in', uniqueValues)
-                                            .limit(1).get();
-
-                                        if (!userSnap.empty) {
-                                            userRef = userSnap.docs[0].ref;
-                                            uid = userSnap.docs[0].id;
-                                            userData = userSnap.docs[0].data();
-                                            console.log(`[WS-Setup] Matched caller to user ${uid}`);
-                                        }
-                                    }
-
-                                    let newConfig: any;
-                                    if (args.agentType === 'hotline') {
-                                        newConfig = {
-                                            enabled: true,
-                                            mode: 'notes',
-                                            welcomeGreeting: `Hello! Ask me anything — I'll answer based on the notes I've been given.`,
-                                            label: args.label || 'My Hotline',
-                                            ownerPhone: callerNumber
-                                        };
-                                    } else {
-                                        const leadFields = (args.dataToCollect || []).map((fieldName: string) => ({
-                                            id: Math.random().toString(36).substr(2, 9),
-                                            name: fieldName,
-                                            required: true
-                                        }));
-                                        newConfig = {
-                                            enabled: true,
-                                            mode: 'leads',
-                                            systemPrompt: `You are the lead capture phone agent for ${args.companyName}. ${args.description}. You offer: ${args.productService}. Website: ${args.website || 'N/A'}. Email: ${args.email || 'N/A'}. Be helpful, extremely brief, and professional.`,
-                                            leadCaptureEnabled: true,
-                                            leadFields: leadFields,
-                                            leadDestination: args.leadDestination || 'app',
-                                            humanHandoffEnabled: !!args.humanHandoffEnabled,
-                                            humanHandoffNumber: args.humanHandoffNumber || '',
-                                            followUpSms: args.followUpSms || ''
-                                        };
-                                    }
-
-                                    if (userRef) {
-                                        const newList = [...(userData.agentPhoneNumbersList || [])];
-                                        if (!newList.includes(newTwilioNumber)) newList.push(newTwilioNumber);
-                                        const allConfigs = { ...(userData.agentPhoneConfigs || {}) };
-                                        allConfigs[newTwilioNumber] = newConfig;
-                                        await userRef.update({
-                                            agentPhoneNumbersList: newList,
-                                            agentPhoneConfigs: allConfigs
-                                        });
-                                        console.log(`[WS-Setup] Saved new config to user ${uid}`);
-                                    } else if (firestore) {
-                                        await firestore.collection('unclaimedAgents').doc(newTwilioNumber).set({
-                                            personalPhoneNumber: callerNumber,
-                                            agentPhoneConfig: newConfig,
-                                            createdAt: new Date().toISOString()
-                                        });
-                                        console.log(`[WS-Setup] Saved new config to unclaimedAgents for ${callerNumber}`);
-                                    }
-
-                                    // If follow-up SMS is configured, send a sample to the owner now
-                                    if (args.followUpSms && callerNumber) {
-                                        const sampleMsg = `Freshfront: Here is a sample of the follow-up text your leads will receive:\n\n"${args.followUpSms}"`;
-                                        sendSms(callerNumber, newTwilioNumber, sampleMsg).catch(e => console.error('[WS-Setup] Sample SMS error:', e));
-                                    }
-
-                                    anyToolCalled = true;
-                                    session.contents.push({
-                                        role: 'user',
-                                        parts: [{
-                                            functionResponse: {
-                                                name: 'provisionAgent',
-                                                response: { 
-                                                    success: true, 
-                                                    newNumber: newTwilioNumber,
-                                                    status: userRef ? "Assigned to existing account" : "Created temporarily. User should sign up with their phone number to claim."
+                                    try {
+                                        let success = false;
+                                        const firestore = initFirebase();
+                                        const userData = session.uid ? await getUserConfig(callerNumber) : null;
+                                        if (userData?.agentPhoneNumbersList?.includes(targetNumber) || !session.uid) {
+                                            const released = await phoneAgentService.releaseTwilioNumber(targetNumber);
+                                            if (released && firestore) {
+                                                if (userData) {
+                                                    const newList = userData.agentPhoneNumbersList.filter((n: string) => n !== targetNumber);
+                                                    const newConfigs = { ...userData.agentPhoneConfigs };
+                                                    delete newConfigs[targetNumber];
+                                                    await firestore.collection('users').doc(userData.uid).update({ agentPhoneNumbersList: newList, agentPhoneConfigs: newConfigs });
+                                                } else {
+                                                    await firestore.collection('unclaimedAgents').doc(targetNumber).delete();
                                                 }
+                                                success = true;
                                             }
-                                        }]
-                                    });
+                                        }
+                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'deleteAgent', response: { success } } }] });
+                                    } catch (e: any) {
+                                        session.contents.push({ role: 'user', parts: [{ functionResponse: { name: 'deleteAgent', response: { error: e.message } } }] });
+                                    }
+                                } else if (call.name === 'getAgentAnalytics') {
+                                    const { timeRange, type } = args;
+                                    const firestore = initFirebase();
+                                    let resultContext = "No analytics data found.";
 
-                                } catch (provErr: any) {
-                                    console.error("[WS-Setup] Error provisioning agent:", provErr);
+                                    if (firestore && session.uid) {
+                                        try {
+                                            const now = new Date();
+                                            let startTime = new Date();
+                                            if (timeRange === 'today') startTime.setHours(0, 0, 0, 0);
+                                            else if (timeRange === 'week') startTime.setDate(now.getDate() - 7);
+                                            else if (timeRange === 'month') startTime.setDate(now.getDate() - 30);
+
+                                            const startTs = startTime.getTime();
+
+                                            if (type === 'leads') {
+                                                const leadsRef = firestore.collection('users').doc(session.uid).collection('phoneAgentLeads');
+                                                const snapshot = await leadsRef.where('timestamp', '>=', startTs).get();
+                                                const count = snapshot.size;
+                                                
+                                                const recentLeads: string[] = [];
+                                                snapshot.docs.slice(0, 3).forEach(doc => {
+                                                    const d = doc.data();
+                                                    recentLeads.push(`${d.name || 'Unknown'} (${d.phoneNumber || 'No phone'}) - ${d.inquiry || 'No inquiry'}`);
+                                                });
+
+                                                resultContext = `You have received ${count} leads in the last ${timeRange}. 
+                                                                ${recentLeads.length > 0 ? "Recent leads include: " + recentLeads.join('; ') : ""}`;
+                                            } else if (type === 'conversations') {
+                                                const historyRef = firestore.collection('users').doc(session.uid).collection('phoneAgentHistory');
+                                                const snapshot = await historyRef.where('timestamp', '>=', startTs).limit(20).get();
+                                                
+                                                const transcripts = snapshot.docs.map(doc => doc.data().text || "").filter(Boolean);
+                                                resultContext = `Analyzed ${snapshot.size} recent message exchanges. Themes detected: ${transcripts.length > 0 ? "Callers are mostly saying: " + transcripts.join(' | ').substring(0, 300) + "..." : "No clear themes found yet."}`;
+                                            }
+                                        } catch (err) {
+                                            console.error("[WS-Setup] Analytics error:", err);
+                                            resultContext = "Error fetching analytics data.";
+                                        }
+                                    } else {
+                                        resultContext = "User account not linked or Firestore unavailable. Analytics unavailable.";
+                                    }
+
                                     session.contents.push({
                                         role: 'user',
                                         parts: [{
                                             functionResponse: {
-                                                name: 'provisionAgent',
-                                                response: { success: false, error: provErr.message || "Failed to provision number." }
+                                                name: call.name,
+                                                response: { content: resultContext }
                                             }
                                         }]
                                     });
@@ -1690,7 +1460,7 @@ After each successful action, confirm it was saved and mention that an SMS confi
 
                 try {
                     const firestore = initFirebase();
-                    const response = await ai.models.generateContent({
+                    const result = await ai.models.generateContentStream({
                         model: 'gemini-2.0-flash',
                         contents: session.contents,
                         config: {
@@ -1699,157 +1469,158 @@ After each successful action, confirm it was saved and mention that an SMS confi
                         }
                     });
 
-                    if (response.candidates?.[0]?.content) {
-                        session.contents.push(response.candidates[0].content);
-                    }
-
                     let responseText = '';
-                    const parts = response.candidates?.[0]?.content?.parts || [];
+                    let anyToolCalled = false;
 
-                    for (const part of parts) {
-                        if (part.text) responseText += part.text;
+                    for await (const chunk of result) {
+                        const text = chunk.text;
+                        if (text) {
+                            responseText += text;
+                            wsProjects.send(JSON.stringify({ type: 'text', token: text, last: false }));
+                        }
 
-                        if (part.functionCall && firestore && callerUid) {
-                            const call = part.functionCall;
-                            let toolResult: any = { success: false };
-                            let smsBody = '';
+                        const calls = chunk.functionCalls;
+                        if (calls && calls.length > 0 && firestore && callerUid) {
+                            anyToolCalled = true;
+                            for (const call of calls) {
+                                let toolResult: any = { success: false };
+                                let smsBody = '';
 
-                            try {
-                                if (call.name === 'listProjects') {
-                                    const snap = await firestore.collection('users').doc(callerUid)
-                                        .collection('projects').orderBy('lastModified', 'desc').limit(15).get();
-                                    projectsCache = snap.docs.map(d => ({ id: d.id, name: d.data().name || 'Untitled' }));
-                                    const list = projectsCache.map((p, i) => `${i + 1}. ${p.name}`).join(', ');
-                                    toolResult = { success: true, projects: projectsCache.map(p => p.name), summary: list };
+                                try {
+                                    if (call.name === 'listProjects') {
+                                        const snap = await firestore.collection('users').doc(callerUid)
+                                            .collection('projects').orderBy('lastModified', 'desc').limit(15).get();
+                                        projectsCache = snap.docs.map(d => ({ id: d.id, name: d.data().name || 'Untitled' }));
+                                        const list = projectsCache.map((p, i) => `${i + 1}. ${p.name}`).join(', ');
+                                        toolResult = { success: true, projects: projectsCache.map(p => p.name), summary: list };
 
-                                } else if (call.name === 'createProject') {
-                                    const { name, description } = call.args as any;
-                                    const now = Date.now();
-                                    const newId = `${now}-${Math.random().toString(36).slice(2, 8)}`;
-                                    const newProject = {
-                                        id: newId, name, description: description || '', createdAt: now,
-                                        lastModified: now, researchSessions: [], draftResearchSessions: [],
-                                        tasks: [], notes: [], knowledgeBase: [], aiInsights: [],
-                                        projectConversations: [], newsArticles: [], pinnedAssetIds: [],
-                                        ownerUid: callerUid
-                                    };
-                                    await firestore.collection('users').doc(callerUid)
-                                        .collection('projects').doc(newId).set(newProject);
-                                    projectsCache.unshift({ id: newId, name });
-                                    toolResult = { success: true, projectId: newId, name };
-                                    smsBody = `✅ Project created: "${name}"\nView it at freshfront.co/projects`;
+                                    } else if (call.name === 'createProject') {
+                                        const { name, description } = call.args as any;
+                                        const now = Date.now();
+                                        const newId = `${now}-${Math.random().toString(36).slice(2, 8)}`;
+                                        const newProject = {
+                                            id: newId, name, description: description || '', createdAt: now,
+                                            lastModified: now, researchSessions: [], draftResearchSessions: [],
+                                            tasks: [], notes: [], knowledgeBase: [], aiInsights: [],
+                                            projectConversations: [], newsArticles: [], pinnedAssetIds: [],
+                                            ownerUid: callerUid
+                                        };
+                                        await firestore.collection('users').doc(callerUid)
+                                            .collection('projects').doc(newId).set(newProject);
+                                        projectsCache.unshift({ id: newId, name });
+                                        toolResult = { success: true, projectId: newId, name };
+                                        smsBody = `✅ Project created: "${name}"\nView it at freshfront.co/projects`;
 
-                                } else if (call.name === 'addNote') {
-                                    const { projectId, title, content } = call.args as any;
-                                    const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
-                                    const noteId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                                    const note = {
-                                        id: noteId, title, content, color: null, pinned: false,
-                                        aiGenerated: false, aiSuggestions: [], tags: [],
-                                        linkedResearchId: null, createdAt: Date.now(), lastModified: Date.now()
-                                    };
-                                    await firestore.collection('users').doc(callerUid)
-                                        .collection('projects').doc(projectId)
-                                        .update({ notes: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(note) });
-                                    toolResult = { success: true, noteId, projectId };
-                                    smsBody = `📝 Note added to "${projectName}":\n"${title}" — ${content.substring(0, 80)}${content.length > 80 ? '...' : ''}`;
+                                    } else if (call.name === 'addNote') {
+                                        const { projectId, title, content } = call.args as any;
+                                        const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
+                                        const noteId = `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                                        const note = {
+                                            id: noteId, title, content, color: null, pinned: false,
+                                            aiGenerated: false, aiSuggestions: [], tags: [],
+                                            linkedResearchId: null, createdAt: Date.now(), lastModified: Date.now()
+                                        };
+                                        await firestore.collection('users').doc(callerUid)
+                                            .collection('projects').doc(projectId)
+                                            .update({ notes: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(note) });
+                                        toolResult = { success: true, noteId, projectId };
+                                        smsBody = `📝 Note added to "${projectName}":\n"${title}" — ${content.substring(0, 80)}${content.length > 80 ? '...' : ''}`;
 
-                                } else if (call.name === 'addTask') {
-                                    const { projectId, title, description: desc, priority } = call.args as any;
-                                    const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
-                                    const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                                    const task = {
-                                        id: taskId, title, description: desc || '', status: 'todo',
-                                        priority: (['low', 'medium', 'high'].includes(priority) ? priority : 'medium'),
-                                        order: 0, createdAt: Date.now(), lastModified: Date.now(),
-                                        aiGenerated: false, tags: []
-                                    };
-                                    await firestore.collection('users').doc(callerUid)
-                                        .collection('projects').doc(projectId)
-                                        .update({ tasks: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(task) });
-                                    toolResult = { success: true, taskId, projectId };
-                                    smsBody = `✅ Task added to "${projectName}":\n"${title}" (${task.priority} priority)`;
+                                    } else if (call.name === 'addTask') {
+                                        const { projectId, title, description: desc, priority } = call.args as any;
+                                        const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
+                                        const taskId = `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                                        const task = {
+                                            id: taskId, title, description: desc || '', status: 'todo',
+                                            priority: (['low', 'medium', 'high'].includes(priority) ? priority : 'medium'),
+                                            order: 0, createdAt: Date.now(), lastModified: Date.now(),
+                                            aiGenerated: false, tags: []
+                                        };
+                                        await firestore.collection('users').doc(callerUid)
+                                            .collection('projects').doc(projectId)
+                                            .update({ tasks: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(task) });
+                                        toolResult = { success: true, taskId, projectId };
+                                        smsBody = `✅ Task added to "${projectName}":\n"${title}" (${task.priority} priority)`;
 
-                                } else if (call.name === 'addCalendarEvent') {
-                                    const { projectId, title, date, description: desc } = call.args as any;
-                                    const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
-                                    const eventId = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-                                    // Parse date string to timestamp (best-effort)
-                                    let dateTs: number;
-                                    try { dateTs = new Date(date).getTime() || Date.now(); } catch { dateTs = Date.now(); }
-                                    const event = {
-                                        id: eventId, title, date: dateTs, description: desc || '',
-                                        createdAt: Date.now(), source: 'voice'
-                                    };
-                                    await firestore.collection('users').doc(callerUid)
-                                        .collection('projects').doc(projectId)
-                                        .update({ calendarEvents: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(event) });
-                                    toolResult = { success: true, eventId, projectId };
-                                    const dateStr = new Date(dateTs).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-                                    smsBody = `📅 Event added to "${projectName}":\n"${title}" on ${dateStr}`;
+                                    } else if (call.name === 'addCalendarEvent') {
+                                        const { projectId, title, date, description: desc } = call.args as any;
+                                        const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
+                                        const eventId = `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+                                        let dateTs: number;
+                                        try { dateTs = new Date(date).getTime() || Date.now(); } catch { dateTs = Date.now(); }
+                                        const event = {
+                                            id: eventId, title, date: dateTs, description: desc || '',
+                                            createdAt: Date.now(), source: 'voice'
+                                        };
+                                        await firestore.collection('users').doc(callerUid)
+                                            .collection('projects').doc(projectId)
+                                            .update({ calendarEvents: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(event) });
+                                        toolResult = { success: true, eventId, projectId };
+                                        const dateStr = new Date(dateTs).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+                                        smsBody = `📅 Event added to "${projectName}":\n"${title}" on ${dateStr}`;
 
-                                } else if (call.name === 'generateImage') {
-                                    const { projectId, prompt } = call.args as any;
-                                    const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
-                                    // Queue via Gemini image generation (Imagen 3)
-                                    try {
-                                        const imgResp = await ai.models.generateImages({
-                                            model: 'imagen-3.0-generate-002',
-                                            prompt,
-                                            config: { numberOfImages: 1, aspectRatio: '16:9' }
-                                        });
-                                        const imgBytes = imgResp.generatedImages?.[0]?.image?.imageBytes;
-                                        if (imgBytes) {
-                                            // Store as base64 data URI in project's generatedImages array
-                                            const dataUri = `data:image/png;base64,${imgBytes}`;
-                                            const imageAsset = {
-                                                id: `img-${Date.now()}`, prompt, url: dataUri,
-                                                createdAt: Date.now(), source: 'voice', type: 'image/png'
-                                            };
-                                            await firestore.collection('users').doc(callerUid)
-                                                .collection('projects').doc(projectId)
-                                                .update({ generatedImages: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(imageAsset) });
-                                            toolResult = { success: true, projectId, prompt };
-                                            smsBody = `🎨 Image generated for "${projectName}"!\nPrompt: "${prompt.substring(0, 60)}${prompt.length > 60 ? '...' : ''}"\nView it in the Assets tab.`;
+                                    } else if (call.name === 'generateImage') {
+                                        const { projectId, prompt } = call.args as any;
+                                        const projectName = projectsCache.find(p => p.id === projectId)?.name || projectId;
+                                        try {
+                                            const imgResp = await ai.models.generateImages({
+                                                model: 'imagen-3.0-generate-002',
+                                                prompt,
+                                                config: { numberOfImages: 1, aspectRatio: '16:9' }
+                                            });
+                                            const imgBytes = imgResp.generatedImages?.[0]?.image?.imageBytes;
+                                            if (imgBytes) {
+                                                const dataUri = `data:image/png;base64,${imgBytes}`;
+                                                const imageAsset = {
+                                                    id: `img-${Date.now()}`, prompt, url: dataUri,
+                                                    createdAt: Date.now(), source: 'voice', type: 'image/png'
+                                                };
+                                                await firestore.collection('users').doc(callerUid)
+                                                    .collection('projects').doc(projectId)
+                                                    .update({ generatedImages: (await import('firebase-admin/firestore')).FieldValue.arrayUnion(imageAsset) });
+                                                toolResult = { success: true, projectId, prompt };
+                                                smsBody = `🎨 Image generated for "${projectName}"!\nPrompt: "${prompt.substring(0, 60)}${prompt.length > 60 ? '...' : ''}"\nView it in the Assets tab.`;
+                                            }
+                                        } catch (imgErr) {
+                                            console.error('[WS-Projects] Image generation failed:', imgErr);
+                                            toolResult = { success: false, error: 'Image generation failed' };
                                         }
-                                    } catch (imgErr) {
-                                        console.error('[WS-Projects] Image generation failed:', imgErr);
-                                        toolResult = { success: false, error: 'Image generation failed' };
                                     }
+                                } catch (toolErr: any) {
+                                    console.error(`[WS-Projects] Tool ${call.name} error:`, toolErr);
+                                    toolResult = { success: false, error: toolErr.message };
                                 }
-                            } catch (toolErr: any) {
-                                console.error(`[WS-Projects] Tool ${call.name} error:`, toolErr);
-                                toolResult = { success: false, error: toolErr.message };
-                            }
 
-                            // Send SMS confirmation
-                            if (smsBody && callerNumber) {
-                                const smsFrom = '+16474904049';
-                                sendSms(callerNumber, smsFrom, smsBody).catch(e => console.error('[WS-Projects] SMS error:', e));
-                            }
+                                if (smsBody && callerNumber) {
+                                    const smsFrom = '+16474904049';
+                                    sendSms(callerNumber, smsFrom, smsBody).catch(e => console.error('[WS-Projects] SMS error:', e));
+                                }
 
-                            // Push function result back and get follow-up response
-                            session.contents.push({
-                                role: 'user',
-                                parts: [{ functionResponse: { name: call.name, response: toolResult } }]
-                            });
-
-                            const followup = await ai.models.generateContent({
-                                model: 'gemini-2.0-flash',
-                                contents: session.contents,
-                                config: { systemInstruction: session.systemPrompt, tools: [projectManagementTools] }
-                            });
-
-                            if (followup.candidates?.[0]?.content) {
-                                session.contents.push(followup.candidates[0].content);
-                                const txt = followup.candidates[0].content.parts?.find((p: any) => p.text)?.text || '';
-                                if (txt) responseText = txt;
+                                session.contents.push({
+                                    role: 'user',
+                                    parts: [{ functionResponse: { name: call.name, response: toolResult } }]
+                                });
                             }
                         }
                     }
 
-                    wsProjects.send(JSON.stringify({ type: 'text', token: responseText || "Done! Is there anything else?", last: true }));
-                    console.log(`[WS-Projects] Gemini (${callSid}): ${responseText?.substring(0, 80)}`);
+                    if (anyToolCalled) {
+                        const followup = await ai.models.generateContentStream({
+                            model: 'gemini-2.0-flash',
+                            contents: session.contents,
+                            config: { systemInstruction: session.systemPrompt, tools: [projectManagementTools] }
+                        });
+                        for await (const chunk of followup) {
+                            const text = chunk.text;
+                            if (text) {
+                                responseText += text;
+                                wsProjects.send(JSON.stringify({ type: 'text', token: text, last: false }));
+                            }
+                        }
+                    }
+
+                    wsProjects.send(JSON.stringify({ type: 'text', token: '', last: true }));
+                    console.log(`[WS-Projects] Gemini (${callSid}): ${responseText.substring(0, 80)}`);
 
                 } catch (apiError) {
                     console.error(`[WS-Projects] Gemini API Error for ${callSid}:`, apiError);
@@ -1867,6 +1638,111 @@ After each successful action, confirm it was saved and mention that an SMS confi
     wsProjects.on('close', () => {
         console.log(`[WS-Projects] Closed for call: ${callSid}`);
         if (callSid && sessions[callSid]) delete sessions[callSid];
+    });
+});
+
+
+// ─── Media Mode WebSocket (/ws-media) — Multimodal Live API Bridge ──────────────
+wssMedia.on('connection', (wsTwilio: WebSocket) => {
+    let streamSid: string | null = null;
+    let callSid: string | null = null;
+    let geminiLiveSession: any = null;
+
+    console.log('[WS-Media] Twilio connected');
+
+    wsTwilio.on('message', async (message: string) => {
+        try {
+            const data = JSON.parse(message);
+
+            if (data.event === 'start') {
+                streamSid = data.start.streamSid;
+                callSid = data.start.callSid;
+                const customParams = data.start.customParameters || {};
+                const to = customParams.to || '';
+                
+                console.log(`[WS-Media] Stream started: ${streamSid} for call ${callSid}`);
+
+                // Fetch user config and instructions
+                const userData = await getUserConfig(to);
+                const normalizedTo = normalizePhoneNumber(to);
+                const activeConfig = userData?.agentPhoneConfigs?.[to] || userData?.agentPhoneConfigs?.[normalizedTo] || userData?.agentPhoneConfig;
+                const systemInstruction = activeConfig?.systemPrompt || DEFAULT_SYSTEM_PROMPT;
+
+                // Connect to Gemini Multimodal Live API
+                try {
+                    geminiLiveSession = await (ai as any).models.live.connect({
+                        model: 'gemini-2.0-flash-exp', 
+                        config: {
+                            systemInstruction: { parts: [{ text: systemInstruction }] },
+                            generationConfig: {
+                                responseModalities: ['audio'],
+                                speechConfig: {
+                                    voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } }
+                                }
+                            }
+                        }
+                    });
+
+                    console.log('[WS-Media] Connected to Gemini Multimodal Live API');
+
+                    // Handle audio from Gemini
+                    geminiLiveSession.on('audio', (audioData: { data: string, mimeType: string }) => {
+                        if (!streamSid) return;
+                        // Gemini sends 24kHz PCM (base64)
+                        const pcm24 = new Int16Array(Buffer.from(audioData.data, 'base64').buffer);
+                        // Resample 24kHz -> 8kHz
+                        const pcm8 = audioUtils.resample24To8(pcm24);
+                        // Convert PCM -> mulaw
+                        const mulaw = audioUtils.pcmToMulaw(pcm8);
+                        // Send to Twilio
+                        wsTwilio.send(JSON.stringify({
+                            event: 'media',
+                            streamSid: streamSid,
+                            media: { payload: Buffer.from(mulaw).toString('base64') }
+                        }));
+                    });
+
+                    geminiLiveSession.on('message', (msg: any) => {
+                        if (msg.serverContent?.modelTurn?.parts?.[0]?.text) {
+                            console.log(`[WS-Media] Gemini Text: ${msg.serverContent.modelTurn.parts[0].text}`);
+                        }
+                    });
+
+                } catch (connErr) {
+                    console.error('[WS-Media] Failed to connect to Gemini Live:', connErr);
+                    wsTwilio.close();
+                }
+
+            } else if (data.event === 'media') {
+                if (!geminiLiveSession) return;
+                // Twilio sends 8kHz mulaw
+                const mulaw = Buffer.from(data.media.payload, 'base64');
+                // Convert mulaw -> PCM (Int16)
+                const pcm8 = audioUtils.mulawToPcm(mulaw);
+                // Resample 8kHz -> 16kHz for Gemini
+                const pcm16 = audioUtils.resample8To16(pcm8);
+                // Send to Gemini
+                geminiLiveSession.send({
+                    realtimeInput: {
+                        mediaChunks: [{
+                            data: Buffer.from(pcm16.buffer).toString('base64'),
+                            mimeType: 'audio/l16;rate=16000'
+                        }]
+                    }
+                });
+
+            } else if (data.event === 'stop') {
+                console.log(`[WS-Media] Stream stopped: ${streamSid}`);
+                if (geminiLiveSession) geminiLiveSession.close();
+            }
+        } catch (err) {
+            console.error('[WS-Media] Error:', err);
+        }
+    });
+
+    wsTwilio.on('close', () => {
+        console.log(`[WS-Media] Twilio closed: ${streamSid}`);
+        if (geminiLiveSession) geminiLiveSession.close();
     });
 });
 
