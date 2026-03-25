@@ -21,6 +21,7 @@ if (!DOMAIN) {
 
 const WS_URL = DOMAIN ? `wss://${DOMAIN}/ws` : `ws://localhost:${PORT}/ws`;
 const WS_URL_FOR_HEALTH = WS_URL;
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://www.freshfront.co';
 
 const WELCOME_GREETING = "Hi! I am a voice assistant powered by Twilio and Google Gemini. Ask me anything!";
 
@@ -133,6 +134,28 @@ const leadCaptureTool = {
                 type: Type.OBJECT,
                 properties: {}
             }
+        },
+        {
+            name: "bookAppointment",
+            description: "Books an appointment on the owner's Google Calendar. Use this ONLY if appointment booking is enabled. Confirm the date and time with the caller first. Pass along all lead details in the notes.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    dateTimeIso: {
+                        type: Type.STRING,
+                        description: "Start time as an ISO 8601 string, e.g. '2026-03-25T14:00:00'. Use the caller's local date/time as best you can infer."
+                    },
+                    durationMinutes: {
+                        type: Type.NUMBER,
+                        description: "Duration of the appointment in minutes (default 60)."
+                    },
+                    notes: {
+                        type: Type.STRING,
+                        description: "All collected lead details formatted as a summary (e.g. 'Name: John, Phone: 555-1234, Inquiry: Roofing quote')."
+                    }
+                },
+                required: ["dateTimeIso", "notes"]
+            }
         }
     ]
 };
@@ -185,9 +208,28 @@ const voiceSetupTools = {
                     },
                     leadDestination: { type: Type.STRING, description: "Route for leads: 'email', 'sms', or 'app' (leads path)" },
                     humanHandoffEnabled: { type: Type.BOOLEAN, description: "Whether human handoff is enabled (leads path, optional)" },
-                    humanHandoffNumber: { type: Type.STRING, description: "The phone number to forward calls to (leads path, required if handoff enabled)" }
+                    humanHandoffNumber: { type: Type.STRING, description: "The phone number to forward calls to (leads path, required if handoff enabled)" },
+                    followUpSms: { type: Type.STRING, description: "Automated SMS to send to callers after they hang up (leads path, e.g. 'Thanks for calling! Book here: [link]')" }
                 },
                 required: ["agentType"]
+            }
+        },
+        {
+            name: "getAgentAnalytics",
+            description: "Queries the user's phone agent leads or conversation history to provide summaries and trends. Use this when the user asks for stats, lead counts, or common questions.",
+            parameters: {
+                type: Type.OBJECT,
+                properties: {
+                    type: { 
+                        type: Type.STRING, 
+                        description: "The type of analytics to fetch: 'leads' for lead counts/info, 'conversations' for trends in what callers are asking." 
+                    },
+                    timeRange: { 
+                        type: Type.STRING, 
+                        description: "The time period to analyze: 'today', 'week', or 'month' (default: 'week')."
+                    }
+                },
+                required: ["type"]
             }
         }
     ]
@@ -472,7 +514,7 @@ const server = http.createServer(async (req, res) => {
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect action="/twiml-handoff">
+    <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay 
             url="${WS_URL}" 
             welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
@@ -528,7 +570,7 @@ const server = http.createServer(async (req, res) => {
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect action="/twiml-handoff">
+    <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay 
             url="${WS_NOTE_URL}" 
             welcomeGreeting="${escapeXmlAttr(welcomeGreeting)}"
@@ -571,7 +613,7 @@ const server = http.createServer(async (req, res) => {
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect action="/twiml-handoff">
+    <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay 
             url="${WS_SETUP_URL}" 
              welcomeGreeting="Welcome to Freshfront! Please wait while I connect you to our agent setup assistant."
@@ -611,7 +653,7 @@ const server = http.createServer(async (req, res) => {
 
             const xmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-    <Connect>
+    <Connect action="${APP_URL}/api/agent?op=webhook">
         <ConversationRelay
             url="${WS_PROJECTS_URL}"
             welcomeGreeting="Hey! Welcome back. You can create projects, add notes, tasks, calendar events, or generate images. What would you like to do?"
@@ -708,6 +750,9 @@ wss.on('connection', (wsMain: WebSocket) => {
                                 Once you have collected the required information, acknowledge it and call the 'saveCapturedLead' tool to save the data. 
                                 Be natural and conversational while asking for these details. 
                                 DO NOT share any internal project data or user information with the caller.`;
+                            }
+                            if (config.appointmentBookingEnabled) {
+                                customInstructions += `\n\nAPPOINTMENT BOOKING: After collecting the caller's information, offer to book an appointment for them. Ask what date and time works best. Once they confirm, call the 'bookAppointment' tool with an ISO 8601 dateTimeIso, their preferred duration in minutes (default 60), and all collected lead details in the notes field.`;
                             }
                             console.log(`[WS] Lead Capture mode for user ${uid}. Restricting context.`);
                         } else {
@@ -838,6 +883,103 @@ wss.on('connection', (wsMain: WebSocket) => {
                                 }));
                                 // After handoff is sent, ConversationRelay will end and Twilio will hit the action URL
                                 return;
+                            } else if (call.name === 'bookAppointment') {
+                                console.log(`[WS] bookAppointment tool called for call ${callSid}:`, call.args);
+                                const apptArgs = call.args as any;
+                                let bookingResult: any = { success: false, error: 'Appointment booking not configured.' };
+
+                                try {
+                                    // 1. Get the agent config to check if booking is enabled
+                                    const agentUserData = await getUserConfig(data.customParameters?.to || callerNumber);
+                                    const normalizedTo = normalizePhoneNumber(data.customParameters?.to || callerNumber);
+                                    const agentCfg = agentUserData?.agentPhoneConfigs?.[data.customParameters?.to] || agentUserData?.agentPhoneConfigs?.[normalizedTo] || agentUserData?.agentPhoneConfig;
+
+                                    if (agentCfg?.appointmentBookingEnabled && agentUserData?.uid) {
+                                        // 2. Get the calendar OAuth token from Firestore
+                                        const firestore3 = initFirebase();
+                                        if (!firestore3) throw new Error('Firestore unavailable');
+
+                                        const calTokenSnap = await firestore3.doc(`users/${agentUserData.uid}/integrations/googleCalendar`).get();
+                                        const refreshToken = calTokenSnap?.data()?.refreshToken;
+                                        if (!refreshToken) throw new Error('Google Calendar not connected');
+
+                                        // 3. Refresh access token
+                                        const clientId = process.env.GOOGLE_DRIVE_CLIENT_ID || '';
+                                        const clientSecret = process.env.GOOGLE_DRIVE_CLIENT_SECRET || '';
+                                        if (!clientId || !clientSecret) throw new Error('Missing Google OAuth credentials');
+
+                                        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                            body: new URLSearchParams({
+                                                client_id: clientId,
+                                                client_secret: clientSecret,
+                                                refresh_token: refreshToken,
+                                                grant_type: 'refresh_token',
+                                            }).toString(),
+                                        });
+                                        if (!tokenRes.ok) throw new Error(`Token refresh failed: ${tokenRes.status}`);
+                                        const tokenJson: any = await tokenRes.json();
+                                        const accessToken = tokenJson.access_token;
+                                        if (!accessToken) throw new Error('No access_token in response');
+
+                                        // 4. Build and create the calendar event
+                                        const startMs = new Date(apptArgs.dateTimeIso).getTime();
+                                        const durationMs = (apptArgs.durationMinutes || 60) * 60 * 1000;
+                                        const endMs = startMs + durationMs;
+                                        const calendarId = agentCfg.calendarId || 'primary';
+
+                                        const eventBody = {
+                                            summary: `📞 Appointment – ${callerNumber}`,
+                                            description: `Booked via phone agent.\n\nLead details:\n${apptArgs.notes}`,
+                                            start: { dateTime: new Date(startMs).toISOString() },
+                                            end: { dateTime: new Date(endMs).toISOString() },
+                                        };
+
+                                        const calRes = await fetch(
+                                            `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+                                            {
+                                                method: 'POST',
+                                                headers: {
+                                                    Authorization: `Bearer ${accessToken}`,
+                                                    'Content-Type': 'application/json',
+                                                },
+                                                body: JSON.stringify(eventBody),
+                                            }
+                                        );
+
+                                        if (!calRes.ok) {
+                                            const errText = await calRes.text();
+                                            throw new Error(`Calendar API error: ${calRes.status} ${errText}`);
+                                        }
+
+                                        const calData: any = await calRes.json();
+                                        bookingResult = { success: true, eventId: calData.id, htmlLink: calData.htmlLink };
+                                        console.log(`[WS] Appointment booked: ${calData.htmlLink}`);
+                                    } else {
+                                        bookingResult = { success: false, error: 'Appointment booking is not enabled for this agent.' };
+                                    }
+                                } catch (bookErr: any) {
+                                    console.error('[WS] bookAppointment error:', bookErr);
+                                    bookingResult = { success: false, error: bookErr.message || 'Failed to book appointment.' };
+                                }
+
+                                session.contents.push({
+                                    role: 'user',
+                                    parts: [{ functionResponse: { name: 'bookAppointment', response: bookingResult } }]
+                                });
+
+                                // Re-call Gemini so it can verbally confirm or apologize
+                                const apptFollowup = await ai.models.generateContent({
+                                    model: 'gemini-2.0-flash',
+                                    contents: session.contents,
+                                    config: { systemInstruction: session.systemPrompt, tools: [leadCaptureTool] }
+                                });
+                                if (apptFollowup.candidates?.[0]?.content) {
+                                    session.contents.push(apptFollowup.candidates[0].content);
+                                    const textPart = apptFollowup.candidates[0].content.parts.find((p: any) => p.text);
+                                    if (textPart?.text) responseText = textPart.text;
+                                }
                             }
                         }
                     }
@@ -1033,7 +1175,8 @@ Introduce a "Management Menu":
 - Ask if they want to create a NEW agent.
 - Ask if they want to DELETE an existing agent.
 - Ask if they want to REPLACE one of their existing numbers with a new one.
-If they want to delete or replace, you MUST use the 'deleteAgent' tool first.`;
+- Ask if they want to see ANALYTICS (e.g. lead counts or common caller questions).
+If they want to delete or replace, you MUST use the 'deleteAgent' tool. For analytics, use 'getAgentAnalytics'.`;
                 }
 
                 const systemPrompt = `You are the Freshfront Agent Setup Assistant. You are talking to a user on the phone. 
@@ -1054,6 +1197,10 @@ For LEAD CAPTURE (agentType='leads'):
 6. What data to collect from callers (e.g. Name, Phone Number, Inquiry)
 7. Where to send leads: email, sms, or app (say 'dashboard' maps to app)
 8. Human Handoff (Ask the user if they want to optionally allow callers to be transferred to a real human during a call. If yes, ask them for the phone number where calls should be forwarded.)
+9. Automated Follow-up SMS (Ask them if they want to send an automatic text to every lead after the call ends, e.g. a booking link or a thank you message. If yes, ask them for the exact message body.)
+
+CRITICAL ACCURACY FOR WEBSITE:
+When the user provides their business website URL, you MUST ask them to **spell it out** (e.g. "Could you spell that out for me to make sure I got it right? A-B-C-dot-com"). This is crucial for correctly configuring their agent.
 
 For INFORMATIONAL HOTLINE (agentType='hotline'):
 1. A friendly label or name for their hotline (optional — if they don't have one, use their business or personal name, or just say 'Your Hotline')
@@ -1201,6 +1348,62 @@ CRITICAL INSTRUCTIONS:
                                         }]
                                     });
                                 }
+                            } else if (call.name === 'getAgentAnalytics') {
+                                anyToolCalled = true;
+                                const type = call.args.type;
+                                const timeRange = call.args.timeRange || 'week';
+                                console.log(`[WS-Setup] Fetching analytics: ${type} for ${timeRange} (${callerNumber})`);
+
+                                const firestore = initFirebase();
+                                let resultContext = "";
+
+                                        if (firestore && session.uid) {
+                                    try {
+                                        const now = new Date();
+                                        let startTime = new Date();
+                                        if (timeRange === 'today') startTime.setHours(0, 0, 0, 0);
+                                        else if (timeRange === 'week') startTime.setDate(now.getDate() - 7);
+                                        else if (timeRange === 'month') startTime.setDate(now.getDate() - 30);
+
+                                        const startTs = startTime.getTime();
+
+                                        if (type === 'leads') {
+                                            const leadsRef = firestore.collection('users').doc(session.uid).collection('phoneAgentLeads');
+                                            const snapshot = await leadsRef.where('timestamp', '>=', startTs).get();
+                                            const count = snapshot.size;
+                                            
+                                            const recentLeads: string[] = [];
+                                            snapshot.docs.slice(0, 3).forEach(doc => {
+                                                const d = doc.data();
+                                                recentLeads.push(`${d.name || 'Unknown'} (${d.phoneNumber || 'No phone'}) - ${d.inquiry || 'No inquiry'}`);
+                                            });
+
+                                            resultContext = `You have received ${count} leads in the last ${timeRange}. 
+                                                            ${recentLeads.length > 0 ? "Recent leads include: " + recentLeads.join('; ') : ""}`;
+                                        } else if (type === 'conversations') {
+                                            const historyRef = firestore.collection('users').doc(session.uid).collection('phoneAgentHistory');
+                                            const snapshot = await historyRef.where('timestamp', '>=', startTs).limit(20).get();
+                                            
+                                            const transcripts = snapshot.docs.map(doc => doc.data().text || "").filter(Boolean);
+                                            resultContext = `Analyzed ${snapshot.size} recent message exchanges. Themes detected: ${transcripts.length > 0 ? "Callers are mostly saying: " + transcripts.join(' | ').substring(0, 300) + "..." : "No clear themes found yet."}`;
+                                        }
+                                    } catch (err) {
+                                        console.error("[WS-Setup] Analytics error:", err);
+                                        resultContext = "Error fetching analytics data.";
+                                    }
+                                } else {
+                                    resultContext = "User account not linked or Firestore unavailable. Analytics unavailable.";
+                                }
+
+                                session.contents.push({
+                                    role: 'user',
+                                    parts: [{
+                                        functionResponse: {
+                                            name: call.name,
+                                            response: { content: resultContext }
+                                        }
+                                    }]
+                                });
                             } else if (call.name === 'provisionAgent') {
                                 const args = call.args as any;
                                 console.log(`[WS-Setup] Provisioning Agent for ${callerNumber}: type=${args.agentType}`, args);
@@ -1220,12 +1423,10 @@ CRITICAL INSTRUCTIONS:
                                     }
                                     const numberToBuy = availableNumbers[0].phone_number;
                                     
-                                    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://www.freshfront.co';
-                                    
                                     const newTwilioNumber = await phoneAgentService.buyTwilioNumber(
                                         numberToBuy,
-                                        appUrl,
-                                        `${appUrl}/api/agent`
+                                        APP_URL,
+                                        `${APP_URL}/api/agent`
                                     );
                                     console.log(`[WS-Setup] New Number Provisioned: ${newTwilioNumber}`);
 
@@ -1275,7 +1476,8 @@ CRITICAL INSTRUCTIONS:
                                             leadFields: leadFields,
                                             leadDestination: args.leadDestination || 'app',
                                             humanHandoffEnabled: !!args.humanHandoffEnabled,
-                                            humanHandoffNumber: args.humanHandoffNumber || ''
+                                            humanHandoffNumber: args.humanHandoffNumber || '',
+                                            followUpSms: args.followUpSms || ''
                                         };
                                     }
 
@@ -1298,6 +1500,13 @@ CRITICAL INSTRUCTIONS:
                                         console.log(`[WS-Setup] Saved new config to unclaimedAgents for ${callerNumber}`);
                                     }
 
+                                    // If follow-up SMS is configured, send a sample to the owner now
+                                    if (args.followUpSms && callerNumber) {
+                                        const sampleMsg = `Freshfront: Here is a sample of the follow-up text your leads will receive:\n\n"${args.followUpSms}"`;
+                                        sendSms(callerNumber, newTwilioNumber, sampleMsg).catch(e => console.error('[WS-Setup] Sample SMS error:', e));
+                                    }
+
+                                    anyToolCalled = true;
                                     session.contents.push({
                                         role: 'user',
                                         parts: [{
